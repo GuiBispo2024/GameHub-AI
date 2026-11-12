@@ -1,0 +1,6 @@
+{
+  "name": "GameHub AI",
+  "description": "Plataforma gamer com catálogo inteligente, gerenciamento de biblioteca e assistente Game Companion.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

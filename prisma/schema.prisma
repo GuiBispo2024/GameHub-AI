@@ -1,0 +1,317 @@
+// Prisma Schema for GameHub AI
+// Platform for game library management, gameplay journeys and AI-powered Companion
+// Configured for PostgreSQL (Neon serverless with pooling & direct migration URL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------
+// 1. USUÁRIOS E PREFERÊNCIAS
+// ---------------------------------------------------------
+
+// User model for authentication, profile and relations
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String
+  avatarUrl    String?
+  bio          String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  preferences       UserPreference?
+  libraryGames      UserGame[]
+  gameplayJourneys  GameplayJourney[]
+  progressLogs      ProgressLog[]
+  companionSessions CompanionSession[]
+  savedBuilds       GameBuild[]
+  authoredGuides    GameGuide[]
+
+  @@map("users")
+}
+
+// User preferences for theme, spoilers, notifications and desktop overlay
+model UserPreference {
+  id                    String       @id @default(uuid())
+  userId                String       @unique
+  theme                 String       @default("dark") // dark, neon, cyberpunk, high-contrast
+  defaultSpoilerLevel   SpoilerLevel @default(CURRENT_CHAPTER)
+  preferredPlatforms    String[]     @default([])
+  preferredGenres       String[]     @default([])
+  language              String       @default("pt-BR")
+  overlayEnabled        Boolean      @default(true)
+  overlayHotkey         String       @default("Alt+G")
+  notificationsEnabled  Boolean      @default(true)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// ---------------------------------------------------------
+// 2. JOGOS E BIBLIOTECA PESSOAL
+// ---------------------------------------------------------
+
+// Status of games in user's library
+enum LibraryStatus {
+  WISHLIST    // Lista de desejos
+  BACKLOG     // Na fila / Pretende jogar
+  PLAYING     // Jogando atualmente
+  COMPLETED   // Zerado / Concluído
+  PAUSED      // Pausado
+  ON_HOLD     // Pausado (legado)
+  DROPPED     // Abandonado
+}
+
+// Catalog game (synced with or cached from IGDB)
+model Game {
+  id          String    @id @default(uuid())
+  igdbId      Int?      @unique
+  name        String
+  slug        String    @unique
+  summary     String?
+  storyline   String?
+  coverUrl    String?
+  backdropUrl String?
+  rating      Float?    // IGDB aggregated rating (0-100)
+  releaseDate DateTime?
+  genres      String[]  // Array of genre names
+  platforms   String[]  // Array of platform names (PC, PS5, Xbox Series X, Switch, etc.)
+  developer   String?
+  publisher   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  libraryEntries    UserGame[]
+  gameplayJourneys  GameplayJourney[]
+  companionSessions CompanionSession[]
+  builds            GameBuild[]
+  guides            GameGuide[]
+
+  @@index([slug])
+  @@index([name])
+  @@map("games")
+}
+
+// User personal game library entry
+model UserGame {
+  id                 String        @id @default(uuid())
+  userId             String
+  gameId             String
+  status             LibraryStatus @default(BACKLOG)
+  rating             Int?          // User score 1-10
+  progressPercentage Int           @default(0) // 0-100%
+  hoursPlayed        Float         @default(0)
+  review             String?
+  personalNotes      String?
+  isFavorite         Boolean       @default(false)
+  currentChapter     String?       // Context for Companion spoiler prevention
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game     Game              @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  journeys GameplayJourney[]
+  logs     ProgressLog[]
+
+  @@unique([userId, gameId])
+  @@index([userId, status])
+  @@map("user_games")
+}
+
+// ---------------------------------------------------------
+// 3. JORNADAS INDIVIDUAIS DE GAMEPLAY E HISTÓRICO
+// ---------------------------------------------------------
+
+// Individual gameplay run/campaign (e.g., "1st Run - Mage", "New Game+ Permadeath", "Speedrun")
+model GameplayJourney {
+  id                 String    @id @default(uuid())
+  userId             String
+  userGameId         String
+  gameId             String
+  title              String    // e.g. "1ª Run - Mago Puro", "New Game+1 Hardcore"
+  characterName      String?   // e.g. "Aurelia", "Tarnished"
+  playstyle          String?   // e.g. "Mage", "Stealth Assassin", "Tank"
+  currentChapter     String?   // e.g. "Montanha dos Gigantes" (currentArea)
+  currentObjective   String?   // e.g. "Derrotar o Comandante Niall"
+  currentLevel       Int?
+  progressPercentage Int       @default(0) // 0-100%
+  playtimeHours      Float     @default(0)
+  isActive           Boolean   @default(false)
+  isCompleted        Boolean   @default(false)
+  notes              String?
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userGame     UserGame           @relation(fields: [userGameId], references: [id], onDelete: Cascade)
+  game         Game               @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  progressLogs ProgressLog[]
+  builds       GameBuild[]
+  sessions     CompanionSession[]
+
+  @@index([userId, gameId])
+  @@index([userGameId])
+  @@index([userGameId, isActive])
+  @@map("gameplay_journeys")
+}
+
+// Chronological progress log checkpoints and milestones
+model ProgressLog {
+  id                  String    @id @default(uuid())
+  userId              String
+  userGameId          String
+  journeyId           String?
+  chapterOrCheckpoint String    // e.g. "Derrotou Margit, o Agouro Caído"
+  areaName            String?
+  questName           String?
+  completionPercent   Int?      // Nullable 0-100 (optional for games without %)
+  progressPercentage  Int       @default(0)
+  hoursPlayedAtPoint  Float     @default(0)
+  playerLevelAtPoint  Int?
+  notes               String?
+  screenshotUrl       String?
+  loggedAt            DateTime  @default(now())
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userGame UserGame         @relation(fields: [userGameId], references: [id], onDelete: Cascade)
+  journey  GameplayJourney? @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+
+  @@index([userGameId, loggedAt])
+  @@index([journeyId, loggedAt])
+  @@map("progress_logs")
+}
+
+// ---------------------------------------------------------
+// 4. BUILDS DE PERSONAGENS
+// ---------------------------------------------------------
+
+// Game builds created by user or recommended by Game Companion
+model GameBuild {
+  id          String   @id @default(uuid())
+  userId      String
+  gameId      String
+  journeyId   String?
+  title       String
+  description String?
+  playstyle   String?  // e.g. "Rios de Sangue Bleed", "Netrunner Stealth", "Paladin Healer"
+  attributes  Json     // Key-value stats: Vigor, Mind, Dexterity, Arcane, etc.
+  equipment   Json     // Weapons, armor, talismans, spells, cyberware
+  tips        String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game    Game             @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  journey GameplayJourney? @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, playstyle])
+  @@index([userId])
+  @@index([journeyId])
+  @@map("game_builds")
+}
+
+// ---------------------------------------------------------
+// 5. GAME COMPANION (CONVERSAS E MENSAGENS)
+// ---------------------------------------------------------
+
+// Spoiler control levels for AI interaction
+enum SpoilerLevel {
+  STRICT_NO_SPOILERS // Apenas mecânicas básicas e controles
+  CURRENT_CHAPTER    // Respeita estritamente o progresso/capítulo atual
+  MID_GAME_SAFE      // Permite lore e itens intermediários, sem endgame
+  FULL_UNRESTRICTED  // Sem restrições (endgame, lore completa, chefes secretos)
+}
+
+// Companion chat session tied to a specific game (and optional journey)
+model CompanionSession {
+  id           String           @id @default(uuid())
+  userId       String
+  gameId       String
+  journeyId    String?          // Links session to user's active run/journey
+  title        String
+  spoilerLevel SpoilerLevel     @default(CURRENT_CHAPTER)
+  userProgress String?          // Context: current mission, boss, or location
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game     Game               @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  journey  GameplayJourney?   @relation(fields: [journeyId], references: [id], onDelete: SetNull)
+  messages CompanionMessage[]
+
+  @@index([userId, gameId])
+  @@index([journeyId])
+  @@map("companion_sessions")
+}
+
+// Message roles for Companion
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// Companion chat messages with metadata and spoiler safety flag
+model CompanionMessage {
+  id          String      @id @default(uuid())
+  sessionId   String
+  role        MessageRole
+  content     String
+  metadata    Json?       // Stores build suggestions, quest markers, tags, token count
+  isSpoiler   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+
+  session CompanionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@map("companion_messages")
+}
+
+// ---------------------------------------------------------
+// 6. GUIAS ASSOCIADOS AOS JOGOS
+// ---------------------------------------------------------
+
+// Walkthroughs, boss strategies, routes and collectible guides
+model GameGuide {
+  id           String       @id @default(uuid())
+  gameId       String
+  authorId     String?      // Nullable if system/companion-generated or community guide
+  title        String
+  slug         String
+  category     String       // e.g. "BOSS_STRATEGY", "WALKTHROUGH", "BUILD_GUIDE", "TROPHY_HUNT", "SECRETS"
+  content      String       // Guide content (Markdown supported)
+  spoilerLevel SpoilerLevel @default(CURRENT_CHAPTER)
+  targetChapter String?
+  upvotes      Int          @default(0)
+  isVerified   Boolean      @default(false)
+  tags         String[]     @default([])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  game   Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@unique([gameId, slug])
+  @@index([gameId, category])
+  @@index([authorId])
+  @@map("game_guides")
+}
