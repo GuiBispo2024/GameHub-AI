@@ -16,7 +16,7 @@ if (!process.env.DATABASE_URL || !process.env.TEST_DATABASE_URL) {
           for (const line of envData.split('\0')) {
             const [k, ...v] = line.split('=');
             if (
-              ['DATABASE_URL', 'DIRECT_URL', 'TEST_DATABASE_URL', 'TEST_DIRECT_URL', 'JWT_SECRET', 'GEMINI_API_KEY', 'TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET', 'GAME_CACHE_TTL_HOURS'].includes(k) &&
+              ['DATABASE_URL', 'DIRECT_URL', 'TEST_DATABASE_URL', 'TEST_DIRECT_URL', 'JWT_SECRET', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_FALLBACK_MODEL', 'GEMINI_TIMEOUT_MS', 'GEMINI_MAX_OUTPUT_TOKENS', 'TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET', 'GAME_CACHE_TTL_HOURS'].includes(k) &&
               !process.env[k]
             ) {
               process.env[k] = v.join('=');
@@ -41,6 +41,10 @@ export const ENV = {
   TEST_DIRECT_URL: process.env.TEST_DIRECT_URL || process.env.TEST_DATABASE_URL || '',
   JWT_SECRET: process.env.JWT_SECRET || 'gamehub_default_secret_key',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-4-hydrogen',
+  GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite',
+  GEMINI_TIMEOUT_MS: parseInt(process.env.GEMINI_TIMEOUT_MS || '25000', 10),
+  GEMINI_MAX_OUTPUT_TOKENS: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || '1200', 10),
   TWITCH_CLIENT_ID: process.env.TWITCH_CLIENT_ID || '',
   TWITCH_CLIENT_SECRET: process.env.TWITCH_CLIENT_SECRET || '',
   GAME_CACHE_TTL_HOURS: parseInt(process.env.GAME_CACHE_TTL_HOURS || '24', 10),

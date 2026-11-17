@@ -3,6 +3,7 @@ import { healthRouter } from './health.routes';
 import { gamesRouter } from '../modules/games/games.routes';
 import { libraryRouter } from '../modules/library/library.routes';
 import { journeysRouter, progressRouter, buildsRouter } from '../modules/journeys/journeys.routes';
+import { agentRouter } from '../modules/agent/agent.routes';
 import { companionRouter } from '../modules/companion/companion.routes';
 import { authRouter } from '../modules/auth/auth.routes';
 import { userRouter } from '../modules/users/user.routes';
@@ -27,5 +28,6 @@ apiRouter.use('/journeys', journeysRouter);
 apiRouter.use('/progress', progressRouter);
 apiRouter.use('/builds', buildsRouter);
 
-// Future Companion Module
+// GameAgent & Gemini AI Companion Module
+apiRouter.use('/agent', agentRouter);
 apiRouter.use('/companion', companionRouter);

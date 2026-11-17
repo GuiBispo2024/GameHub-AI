@@ -119,7 +119,7 @@ export function DashboardView({
               <div className="text-emerald-400">✓ /health & /api/health → Dual Health Check (JSON estrito)</div>
               <div className="text-violet-400">✓ /api/games → IGDB Catalog Router</div>
               <div className="text-blue-400">✓ /api/library → User Personal Library Router</div>
-              <div className="text-indigo-400">✓ /api/companion → Gemini AI Companion Router</div>
+              <div className="text-indigo-400">✓ /api/agent → GameAgent Gemini AI Router</div>
               <div className="text-amber-400">✓ /api/auth → JWT Authentication Router</div>
             </div>
           </CardContent>
@@ -270,7 +270,7 @@ export function DashboardView({
             </CardHeader>
             <CardContent className="p-4 pt-0 text-xs text-slate-400">
               <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-blue-300 font-medium">
-                <span>Ver estrutura</span>
+                <span>Abrir Companion</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </div>
             </CardContent>

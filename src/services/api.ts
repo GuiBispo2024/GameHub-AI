@@ -11,6 +11,12 @@ import {
   ProgressLogItem,
   GameBuildItem,
   JourneyStatus,
+  AgentMode,
+  SpoilerLevel,
+  AgentConversationSummary,
+  AgentConversationDetail,
+  AgentChatResponse,
+  AgentActionDecisionResponse,
 } from '../types';
 
 export class ApiService {
@@ -657,5 +663,138 @@ export class ApiService {
       err.code = json.code;
       throw err;
     }
+  }
+
+  // GameAgent (Gemini AI) Endpoints
+  static async sendAgentMessage(payload: {
+    message: string;
+    mode?: AgentMode;
+    conversationId?: string | null;
+    gameId?: string | null;
+    journeyId?: string | null;
+    spoilerLevel?: SpoilerLevel | null;
+    title?: string | null;
+    clientRequestId?: string | null;
+  }): Promise<AgentChatResponse> {
+    const res = await fetch(`${this.baseUrl}/agent/chat`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = json.errors
+        ? Object.values(json.errors).flat().join(', ')
+        : json.message || 'Erro ao conversar com o GameAgent.';
+      const err: any = new Error(errMsg);
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+
+    return json;
+  }
+
+  static async getAgentConversations(params: {
+    page?: number;
+    limit?: number;
+    mode?: AgentMode;
+    gameId?: string;
+  } = {}): Promise<{ data: AgentConversationSummary[]; pagination: LibraryPagination }> {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.mode) query.set('mode', params.mode);
+    if (params.gameId) query.set('gameId', params.gameId);
+
+    const qs = query.toString();
+    const res = await fetch(`${this.baseUrl}/agent/conversations${qs ? `?${qs}` : ''}`, {
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(json.message || 'Erro ao carregar histórico de conversas.');
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+
+    return {
+      data: json.data || [],
+      pagination: json.pagination,
+    };
+  }
+
+  static async getAgentConversation(id: string): Promise<AgentConversationDetail> {
+    const res = await fetch(`${this.baseUrl}/agent/conversations/${id}`, {
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(json.message || 'Erro ao carregar conversa.');
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+
+    return json.data;
+  }
+
+  static async deleteAgentConversation(id: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/agent/conversations/${id}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
+
+    if (!res.ok && res.status !== 204) {
+      const json = await res.json().catch(() => ({}));
+      const err: any = new Error(json.message || 'Erro ao excluir conversa.');
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+  }
+
+  static async confirmAgentAction(actionId: string): Promise<AgentActionDecisionResponse> {
+    const res = await fetch(`${this.baseUrl}/agent/actions/${actionId}/confirm`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(json.message || 'Erro ao confirmar ação proposta.');
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+
+    return json;
+  }
+
+  static async cancelAgentAction(actionId: string): Promise<AgentActionDecisionResponse> {
+    const res = await fetch(`${this.baseUrl}/agent/actions/${actionId}/cancel`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(json.message || 'Erro ao cancelar ação proposta.');
+      err.status = res.status;
+      err.code = json.code;
+      throw err;
+    }
+
+    return json;
   }
 }

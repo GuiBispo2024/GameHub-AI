@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 import { JourneysRepository } from './journeys.repository';
 import {
   CreateGameBuildInput,
@@ -101,20 +102,36 @@ export class JourneysService {
   async createJourney(userId: string, input: CreateJourneyInput): Promise<JourneyDTO> {
     const userGame = await this.ensureOwnedUserGame(userId, input.userGameId);
 
-    // Retry gracefully if concurrent creation races for the partial unique active index
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         return await this.repository.createJourney(userId, userGame.gameId, input);
       } catch (err: any) {
-        if (err?.code === 'P2002' && attempt < 2) {
-          await sleep(15 + attempt * 20);
-          continue;
+        if (err?.code === 'P2002') {
+          logger.warn('[JourneysService] Contenção concorrente ao criar jornada ativa (P2002)', {
+            userId,
+            userGameId: input.userGameId,
+            attempt: attempt + 1,
+          });
+          if (attempt < maxAttempts - 1) {
+            await sleep(15 + attempt * 20);
+            continue;
+          }
+          throw createHttpError(
+            'Conflito concorrente ao definir jornada ativa. Tente novamente.',
+            409,
+            'CONCURRENT_ACTIVATION_CONFLICT'
+          );
         }
         throw err;
       }
     }
 
-    return this.repository.createJourney(userId, userGame.gameId, input);
+    throw createHttpError(
+      'Não foi possível criar a jornada devido à contenção concorrente.',
+      409,
+      'CONCURRENT_ACTIVATION_CONFLICT'
+    );
   }
 
   async listJourneys(userId: string, query: ListJourneysQuery): Promise<JourneyListResult> {
@@ -156,20 +173,38 @@ export class JourneysService {
   async activateJourney(userId: string, journeyId: string): Promise<JourneyDTO> {
     const journey = await this.ensureOwnedJourney(userId, journeyId);
 
-    // Transaction + retry guards against concurrent PATCH /activate hitting PostgreSQL partial unique index
-    for (let attempt = 0; attempt < 4; attempt++) {
+    // Row lock inside repository serializes concurrent activations; bounded P2002 retry stays as defensive safeguard
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         return await this.repository.activateJourney(journey.id, journey.userGameId);
       } catch (err: any) {
-        if (err?.code === 'P2002' && attempt < 3) {
-          await sleep(15 + attempt * 20);
-          continue;
+        if (err?.code === 'P2002') {
+          logger.warn('[JourneysService] Contenção concorrente ao ativar jornada (P2002)', {
+            userId,
+            journeyId: journey.id,
+            userGameId: journey.userGameId,
+            attempt: attempt + 1,
+          });
+          if (attempt < maxAttempts - 1) {
+            await sleep(15 + attempt * 20);
+            continue;
+          }
+          throw createHttpError(
+            'Conflito concorrente ao alternar jornada ativa. Tente novamente.',
+            409,
+            'CONCURRENT_ACTIVATION_CONFLICT'
+          );
         }
         throw err;
       }
     }
 
-    return this.repository.activateJourney(journey.id, journey.userGameId);
+    throw createHttpError(
+      'Não foi possível ativar a jornada devido à contenção concorrente.',
+      409,
+      'CONCURRENT_ACTIVATION_CONFLICT'
+    );
   }
 
   async deleteJourney(userId: string, journeyId: string): Promise<void> {

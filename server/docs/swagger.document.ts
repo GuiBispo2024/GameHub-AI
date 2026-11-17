@@ -214,7 +214,9 @@ A API suporta autenticação state-aware via:
               auth: { type: 'string', example: 'ACTIVE' },
               users: { type: 'string', example: 'ACTIVE' },
               library: { type: 'string', example: 'ACTIVE' },
-              companion: { type: 'string', example: 'STRUCTURE_READY' },
+              journeys: { type: 'string', example: 'ACTIVE' },
+              companion: { type: 'string', example: 'ACTIVE' },
+              agent: { type: 'string', example: 'ACTIVE' },
             },
           },
         },
@@ -547,6 +549,209 @@ A API suporta autenticação state-aware via:
           attributes: { type: 'object', additionalProperties: true },
           equipment: { type: 'object', additionalProperties: true },
           notes: { type: 'string', maxLength: 2000, nullable: true },
+        },
+      },
+      AgentChatRequest: {
+        type: 'object',
+        required: ['message'],
+        properties: {
+          message: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            example: 'Qual distribuição de atributos funciona melhor para um mago no capítulo atual?',
+          },
+          mode: {
+            type: 'string',
+            enum: ['LIBRARY', 'COMPANION'],
+            default: 'COMPANION',
+            example: 'COMPANION',
+            description: 'LIBRARY para dúvidas gerais e organização da biblioteca; COMPANION para assistência contextual na gameplay.',
+          },
+          conversationId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description: 'UUID de conversa existente para continuar o histórico.',
+          },
+          gameId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description: 'UUID do jogo em foco.',
+          },
+          journeyId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description: 'UUID da jornada ativa (carregada e validada via journeysService.getJourneyContext).',
+          },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED', 'NONE', 'LIGHT', 'ALL'],
+            nullable: true,
+            example: 'CURRENT_CHAPTER',
+          },
+          title: {
+            type: 'string',
+            maxLength: 120,
+            nullable: true,
+          },
+          clientRequestId: {
+            type: 'string',
+            maxLength: 100,
+            nullable: true,
+            description: 'Chave opcional de idempotência para evitar duplicação de mensagens em retries.',
+          },
+        },
+      },
+      AgentMessage: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          sessionId: { type: 'string', format: 'uuid' },
+          role: { type: 'string', enum: ['USER', 'ASSISTANT', 'SYSTEM'], example: 'ASSISTANT' },
+          content: { type: 'string', example: 'Com base na sua jornada atual, priorize Inteligência e Vigor...' },
+          isSpoiler: { type: 'boolean', example: false },
+          metadata: { type: 'object', nullable: true, additionalProperties: true },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      AgentConversationSummary: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          userId: { type: 'string', format: 'uuid' },
+          title: { type: 'string', example: 'Elden Ring: Build de Mago em Liurnia' },
+          mode: { type: 'string', enum: ['LIBRARY', 'COMPANION'], example: 'COMPANION' },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED'],
+            example: 'CURRENT_CHAPTER',
+          },
+          gameId: { type: 'string', format: 'uuid', nullable: true },
+          journeyId: { type: 'string', format: 'uuid', nullable: true },
+          lastRequestStatus: { type: 'string', enum: ['IDLE', 'PROCESSING', 'COMPLETED', 'FAILED'], example: 'COMPLETED' },
+          lastErrorMessage: { type: 'string', nullable: true },
+          messageCount: { type: 'integer', example: 4 },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      AgentToolTrace: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', example: 'getUserLibrary' },
+          accessType: { type: 'string', enum: ['READ', 'WRITE'], example: 'READ' },
+          status: {
+            type: 'string',
+            enum: ['EXECUTED', 'PENDING_CONFIRMATION', 'REJECTED', 'FAILED'],
+            example: 'EXECUTED',
+          },
+          durationMs: { type: 'integer', example: 42 },
+          errorCode: { type: 'string', nullable: true },
+        },
+      },
+      AgentActionProposal: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          sessionId: { type: 'string', format: 'uuid' },
+          messageId: { type: 'string', format: 'uuid', nullable: true },
+          toolName: {
+            type: 'string',
+            enum: ['addGameToLibrary', 'updateGameProgress'],
+            example: 'addGameToLibrary',
+          },
+          validatedArgs: { type: 'object', additionalProperties: true },
+          summary: {
+            type: 'string',
+            example: 'Adicionar "Elden Ring" à sua biblioteca pessoal com status Jogando (PLAYING).',
+          },
+          preview: { type: 'object', nullable: true, additionalProperties: true },
+          status: {
+            type: 'string',
+            enum: ['PENDING', 'CONFIRMED', 'EXECUTED', 'CANCELLED', 'EXPIRED', 'FAILED'],
+            example: 'PENDING',
+          },
+          expiresAt: { type: 'string', format: 'date-time' },
+          confirmedAt: { type: 'string', format: 'date-time', nullable: true },
+          executedAt: { type: 'string', format: 'date-time', nullable: true },
+          cancelledAt: { type: 'string', format: 'date-time', nullable: true },
+          executionResult: { type: 'object', nullable: true, additionalProperties: true },
+          errorMessage: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      AgentActionDecisionResponse: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', example: 'success' },
+          message: { type: 'string', example: 'Ação confirmada e executada com sucesso.' },
+          action: { $ref: '#/components/schemas/AgentActionProposal' },
+          followUpMessage: {
+            allOf: [{ $ref: '#/components/schemas/AgentMessage' }],
+            nullable: true,
+          },
+        },
+      },
+      AgentConversationDetail: {
+        allOf: [
+          { $ref: '#/components/schemas/AgentConversationSummary' },
+          {
+            type: 'object',
+            properties: {
+              messages: {
+                type: 'array',
+                items: { $ref: '#/components/schemas/AgentMessage' },
+              },
+              actionProposals: {
+                type: 'array',
+                items: { $ref: '#/components/schemas/AgentActionProposal' },
+              },
+            },
+          },
+        ],
+      },
+      AgentChatResponse: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', example: 'success' },
+          conversationId: { type: 'string', format: 'uuid' },
+          mode: { type: 'string', enum: ['LIBRARY', 'COMPANION'] },
+          requestStatus: { type: 'string', example: 'COMPLETED' },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED'],
+          },
+          deduplicated: { type: 'boolean', example: false },
+          groundedInRealData: {
+            type: 'boolean',
+            example: true,
+            description: 'Indica se a resposta foi fundamentada em dados reais retornados por ferramentas autorizadas ou contexto persistido.',
+          },
+          toolsUsed: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/AgentToolTrace' },
+          },
+          pendingActions: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/AgentActionProposal' },
+            description: 'Propostas de escrita aguardando confirmação explícita do usuário na interface.',
+          },
+          contextUsed: {
+            type: 'object',
+            properties: {
+              gameId: { type: 'string', format: 'uuid', nullable: true },
+              gameTitle: { type: 'string', nullable: true },
+              journeyId: { type: 'string', format: 'uuid', nullable: true },
+              journeyName: { type: 'string', nullable: true },
+              librarySummaryIncluded: { type: 'boolean', example: false },
+            },
+          },
+          userMessage: { $ref: '#/components/schemas/AgentMessage' },
+          reply: { $ref: '#/components/schemas/AgentMessage' },
+          conversation: { $ref: '#/components/schemas/AgentConversationSummary' },
         },
       },
     },
@@ -1801,6 +2006,178 @@ A API suporta autenticação state-aware via:
           '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '403': { description: 'Build pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '404': { description: 'Build não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/agent/chat': {
+      post: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Enviar mensagem ao GameAgent e receber resposta contextualizada',
+        description: 'Processa perguntas via Gemini API (@google/genai) nos modos LIBRARY ou COMPANION, respeitando preferências de spoilers, contexto da jornada autenticada e controle de concorrência/rate limit.',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/AgentChatRequest' },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Resposta gerada e turno persistido com sucesso.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AgentChatResponse' },
+              },
+            },
+          },
+          '400': { description: 'Payload inválido ou incompatibilidade entre jornada e jogo.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Conversa ou jornada pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Conversa, jogo ou jornada não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Requisição concorrente em andamento para esta conta ou conversa.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '429': { description: 'Limite temporário de requisições ao agente atingido.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '502': { description: 'Erro ao consultar o provedor de IA.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '503': { description: 'Serviço de IA não configurado ou temporariamente limitado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '504': { description: 'Timeout ao aguardar resposta do provedor de IA.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/agent/conversations': {
+      get: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Listar conversas persistidas do usuário autenticado',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 50 } },
+          { name: 'mode', in: 'query', schema: { type: 'string', enum: ['LIBRARY', 'COMPANION'] } },
+          { name: 'gameId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Lista paginada de conversas do usuário.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    data: { type: 'array', items: { $ref: '#/components/schemas/AgentConversationSummary' } },
+                    pagination: { $ref: '#/components/schemas/PaginationMeta' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/agent/conversations/{id}': {
+      get: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Obter histórico completo de uma conversa do usuário',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': {
+            description: 'Detalhes da conversa e mensagens retornados com sucesso.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    data: { $ref: '#/components/schemas/AgentConversationDetail' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Conversa pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Conversa não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      delete: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Excluir conversa do usuário autenticado',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '204': { description: 'Conversa removida com sucesso.' },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Conversa pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Conversa não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/agent/actions/{id}/confirm': {
+      post: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Confirmar e executar uma proposta de ação de escrita do GameAgent',
+        description:
+          'Executa de forma atômica e idempotente uma proposta pendente (ex.: addGameToLibrary ou updateGameProgress) após aprovação explícita do usuário autenticado. Valida propriedade, prazo de validade (TTL) e integridade SHA-256 dos parâmetros.',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', format: 'uuid' },
+            description: 'UUID da proposta de ação pendente (AgentActionProposal)',
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Ação confirmada e executada com sucesso.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AgentActionDecisionResponse' },
+              },
+            },
+          },
+          '400': { description: 'Identificador inválido.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Proposta pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Proposta de ação não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Ação já executada, cancelada, em processamento concorrente ou parâmetros inválidos/duplicados.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '410': { description: 'Proposta de ação expirada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/agent/actions/{id}/cancel': {
+      post: {
+        tags: ['GameAgent (Gemini AI)'],
+        summary: 'Cancelar uma proposta de ação de escrita pendente',
+        description: 'Marca a proposta como CANCELLED sem realizar nenhuma alteração na biblioteca ou nas jornadas do usuário.',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', format: 'uuid' },
+            description: 'UUID da proposta de ação pendente',
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Proposta cancelada com sucesso.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AgentActionDecisionResponse' },
+              },
+            },
+          },
+          '400': { description: 'Identificador inválido.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Proposta pertence a outro usuário.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Proposta não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Ação já executada ou previamente cancelada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '410': { description: 'Proposta de ação já expirada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

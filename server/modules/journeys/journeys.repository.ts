@@ -132,6 +132,9 @@ export class JourneysRepository {
         : input.status === 'COMPLETED';
 
     const created = await prisma.$transaction(async (tx) => {
+      // Serializes concurrent journey creation/activation for the same UserGame row
+      await tx.$queryRaw`SELECT id FROM "user_games" WHERE id = ${input.userGameId} FOR UPDATE`;
+
       const existingCount = await tx.gameplayJourney.count({
         where: { userGameId: input.userGameId },
       });
@@ -266,6 +269,9 @@ export class JourneysRepository {
 
   async activateJourney(id: string, userGameId: string): Promise<JourneyDTO> {
     const activated = await prisma.$transaction(async (tx) => {
+      // Serializes concurrent activations for the same UserGame so transactions never collide on the partial unique index
+      await tx.$queryRaw`SELECT id FROM "user_games" WHERE id = ${userGameId} FOR UPDATE`;
+
       await tx.gameplayJourney.updateMany({
         where: {
           userGameId,

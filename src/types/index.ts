@@ -196,3 +196,124 @@ export interface AuthResponse {
   token?: string;
   errors?: Record<string, string[]>;
 }
+
+export type AgentMode = 'LIBRARY' | 'COMPANION';
+
+export type AgentRequestStatus = 'IDLE' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+
+export interface AgentMessage {
+  id: string;
+  sessionId: string;
+  role: 'USER' | 'ASSISTANT' | 'SYSTEM';
+  content: string;
+  isSpoiler: boolean;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AgentConversationSummary {
+  id: string;
+  userId: string;
+  title: string;
+  mode: AgentMode;
+  spoilerLevel: SpoilerLevel;
+  gameId: string | null;
+  journeyId: string | null;
+  lastRequestStatus: AgentRequestStatus;
+  lastErrorMessage: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  game?: {
+    id: string;
+    igdbId: number | null;
+    title: string;
+    slug: string;
+    coverUrl: string | null;
+    genres: string[];
+    platforms: string[];
+  } | null;
+  journey?: {
+    id: string;
+    name: string;
+    characterName: string | null;
+    characterClass: string | null;
+    currentLevel: number | null;
+    currentArea: string | null;
+    currentObjective: string | null;
+    playtimeHours: number;
+    isCompleted: boolean;
+  } | null;
+}
+
+export type AgentToolAccessType = 'READ' | 'WRITE';
+
+export type AgentToolTraceStatus = 'EXECUTED' | 'PENDING_CONFIRMATION' | 'FAILED' | 'REJECTED';
+
+export interface AgentToolExecutionTrace {
+  name: string;
+  accessType: AgentToolAccessType;
+  status: AgentToolTraceStatus;
+  durationMs: number;
+  errorCode?: string;
+}
+
+export type AgentActionStatus =
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'EXECUTED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'FAILED';
+
+export interface AgentActionProposal {
+  id: string;
+  sessionId: string;
+  messageId: string | null;
+  toolName: string;
+  validatedArgs: Record<string, unknown>;
+  summary: string;
+  preview: Record<string, unknown> | null;
+  status: AgentActionStatus;
+  expiresAt: string;
+  confirmedAt: string | null;
+  executedAt: string | null;
+  cancelledAt: string | null;
+  executionResult: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface AgentConversationDetail extends AgentConversationSummary {
+  messages: AgentMessage[];
+  actionProposals?: AgentActionProposal[];
+}
+
+export interface AgentChatResponse {
+  status: 'success';
+  conversationId: string;
+  mode: AgentMode;
+  requestStatus: 'COMPLETED';
+  spoilerLevel: SpoilerLevel;
+  deduplicated?: boolean;
+  groundedInRealData?: boolean;
+  toolsUsed?: AgentToolExecutionTrace[];
+  pendingActions?: AgentActionProposal[];
+  contextUsed: {
+    gameId: string | null;
+    gameTitle: string | null;
+    journeyId: string | null;
+    journeyName: string | null;
+    librarySummaryIncluded: boolean;
+  };
+  userMessage: AgentMessage;
+  reply: AgentMessage;
+  conversation: AgentConversationSummary;
+}
+
+export interface AgentActionDecisionResponse {
+  status: 'success';
+  message: string;
+  action: AgentActionProposal;
+  followUpMessage?: AgentMessage | null;
+}

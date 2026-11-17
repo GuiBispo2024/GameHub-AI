@@ -358,6 +358,35 @@ describe('GameHub AI - Módulo de Autenticação e Perfil Gamer (Fase 1, Prompt 
     expect(res3.headers['ratelimit-remaining']).toBeDefined();
   });
 
+  it('13b. Deve suportar headers X-Forwarded-For e Forwarded atrás de proxy sem gerar ValidationError', async () => {
+    const { createAuthLimiter } = await import('../server/middlewares/rate-limit.middleware');
+    const express = (await import('express')).default;
+    const proxyApp = express();
+    proxyApp.set('trust proxy', 1);
+    proxyApp.use(createAuthLimiter({ max: 1, skip: () => false }));
+    proxyApp.post('/proxy-check', (req, res) => res.json({ ip: req.ip }));
+
+    const r1 = await request(proxyApp)
+      .post('/proxy-check')
+      .set('X-Forwarded-For', '203.0.113.10')
+      .set('Forwarded', 'for="203.0.113.10";proto=https');
+    expect(r1.status).toBe(200);
+    expect(r1.body.ip).toBe('203.0.113.10');
+
+    // Mesmo cliente deve ser limitado (429), sem ValidationError
+    const r2 = await request(proxyApp)
+      .post('/proxy-check')
+      .set('X-Forwarded-For', '203.0.113.10')
+      .set('Forwarded', 'for="203.0.113.10";proto=https');
+    expect(r2.status).toBe(429);
+
+    // Outro IP via Forwarded deve passar normalmente (200)
+    const r3 = await request(proxyApp)
+      .post('/proxy-check')
+      .set('Forwarded', 'for="[2001:db8::1]:443";proto=https');
+    expect(r3.status).toBe(200);
+  });
+
   // Teste 14: Validação de cookies de autenticação
   it('14. Deve validar integridade e atributos do cookie HttpOnly de autenticação', async () => {
     const res = await request(app)

@@ -28,9 +28,11 @@ export function errorHandler(
     return;
   }
 
-  // 2. Custom App/Operational Errors
+  // 2. Custom App/Operational Errors (4xx and explicit operational 502/503/504 errors)
   const statusCode = err.statusCode || 500;
   const isClientError = statusCode >= 400 && statusCode < 500;
+  const isOperationalServerError =
+    statusCode >= 500 && statusCode < 600 && typeof err.statusCode === 'number' && Boolean(err.code);
 
   if (isClientError) {
     logger.warn(`[Client Error ${statusCode}] ${req.method} ${req.originalUrl}: ${err.message}`);
@@ -39,6 +41,16 @@ export function errorHandler(
       code: err.code || 'BAD_REQUEST',
       message: err.message || 'Requisição inválida.',
       field: err.field,
+    });
+    return;
+  }
+
+  if (isOperationalServerError) {
+    logger.error(`[Operational Error ${statusCode}] ${req.method} ${req.originalUrl} (${err.code}): ${err.message}`);
+    res.status(statusCode).json({
+      status: 'error',
+      code: err.code,
+      message: err.message || 'Serviço temporariamente indisponível.',
     });
     return;
   }

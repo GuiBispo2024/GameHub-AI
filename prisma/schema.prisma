@@ -33,6 +33,7 @@ model User {
   gameplayJourneys  GameplayJourney[]
   progressLogs      ProgressLog[]
   companionSessions CompanionSession[]
+  actionProposals   AgentActionProposal[]
   savedBuilds       GameBuild[]
   authoredGuides    GameGuide[]
 
@@ -240,25 +241,44 @@ enum SpoilerLevel {
   FULL_UNRESTRICTED  // Sem restrições (endgame, lore completa, chefes secretos)
 }
 
-// Companion chat session tied to a specific game (and optional journey)
-model CompanionSession {
-  id           String           @id @default(uuid())
-  userId       String
-  gameId       String
-  journeyId    String?          // Links session to user's active run/journey
-  title        String
-  spoilerLevel SpoilerLevel     @default(CURRENT_CHAPTER)
-  userProgress String?          // Context: current mission, boss, or location
-  isActive     Boolean          @default(true)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+// Operational mode for GameAgent
+enum AgentMode {
+  LIBRARY // Catalog, backlog organization and general recommendations
+  COMPANION // Contextualized gameplay assistance, builds and spoiler-safe tips
+}
 
-  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  game     Game               @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  journey  GameplayJourney?   @relation(fields: [journeyId], references: [id], onDelete: SetNull)
-  messages CompanionMessage[]
+// Request lifecycle state for conversation persistence
+enum AgentRequestStatus {
+  IDLE
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Companion chat session tied to a user and optional game/journey
+model CompanionSession {
+  id                String             @id @default(uuid())
+  userId            String
+  gameId            String?
+  journeyId         String? // Links session to user's active run/journey
+  title             String
+  mode              AgentMode          @default(COMPANION)
+  spoilerLevel      SpoilerLevel       @default(CURRENT_CHAPTER)
+  userProgress      String? // Context: current mission, boss, or location
+  lastRequestStatus AgentRequestStatus @default(IDLE)
+  lastErrorMessage  String?
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game            Game?                 @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  journey         GameplayJourney?      @relation(fields: [journeyId], references: [id], onDelete: SetNull)
+  messages        CompanionMessage[]
+  actionProposals AgentActionProposal[]
 
   @@index([userId, gameId])
+  @@index([userId, updatedAt])
   @@index([journeyId])
   @@map("companion_sessions")
 }
@@ -272,18 +292,60 @@ enum MessageRole {
 
 // Companion chat messages with metadata and spoiler safety flag
 model CompanionMessage {
-  id          String      @id @default(uuid())
-  sessionId   String
-  role        MessageRole
-  content     String
-  metadata    Json?       // Stores build suggestions, quest markers, tags, token count
-  isSpoiler   Boolean     @default(false)
-  createdAt   DateTime    @default(now())
+  id              String      @id @default(uuid())
+  sessionId       String
+  role            MessageRole
+  content         String
+  clientRequestId String? // Idempotency key to prevent duplicate messages on retries
+  metadata        Json? // Stores build suggestions, quest markers, tags, token count, status
+  isSpoiler       Boolean     @default(false)
+  createdAt       DateTime    @default(now())
 
   session CompanionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, createdAt])
+  @@index([sessionId, clientRequestId])
   @@map("companion_messages")
+}
+
+// Lifecycle states for user-confirmed write action proposals
+enum AgentActionStatus {
+  PENDING
+  CONFIRMED
+  EXECUTED
+  CANCELLED
+  EXPIRED
+  FAILED
+}
+
+// Persistent write action proposals awaiting explicit user confirmation
+model AgentActionProposal {
+  id              String            @id @default(uuid())
+  userId          String
+  sessionId       String
+  messageId       String?
+  toolName        String
+  validatedArgs   Json
+  argsHash        String
+  summary         String
+  preview         Json?
+  status          AgentActionStatus @default(PENDING)
+  expiresAt       DateTime
+  confirmedAt     DateTime?
+  executedAt      DateTime?
+  cancelledAt     DateTime?
+  executionResult Json?
+  errorMessage    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session CompanionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([sessionId, createdAt])
+  @@index([expiresAt])
+  @@map("agent_action_proposals")
 }
 
 // ---------------------------------------------------------

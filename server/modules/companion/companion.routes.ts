@@ -1,12 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
+import { requireAuth } from '../../middlewares/auth.middleware';
+import { AgentController } from '../agent/agent.controller';
 
 export const companionRouter = Router();
 
-// Placeholder routes for Game Companion with Gemini
-companionRouter.get('/sessions', (_req: Request, res: Response) => {
-  res.status(501).json({
-    status: 'NOT_IMPLEMENTED',
-    module: 'Game Companion (Gemini AI)',
-    message: 'O agente inteligente Game Companion com Gemini API será implementado na etapa de Companion.',
-  });
-});
+// Backward-compatible alias for listing active GameAgent companion sessions
+companionRouter.get('/sessions', requireAuth, AgentController.listConversations);

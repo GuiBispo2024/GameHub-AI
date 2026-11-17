@@ -7,6 +7,9 @@ import { errorHandler } from './middlewares/error.middleware';
 export function createApp(): Express {
   const app = express();
 
+  // Trust immediate reverse proxy hop (e.g. Cloud Run / Nginx) for accurate client IP & rate limiting
+  app.set('trust proxy', 1);
+
   // JSON and URL-encoded body parsers
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
