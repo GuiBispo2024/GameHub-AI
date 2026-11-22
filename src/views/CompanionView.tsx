@@ -25,6 +25,8 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
+  ExternalLink,
+  FileCheck2,
 } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -41,6 +43,7 @@ import {
   AgentMode,
   AgentToolExecutionTrace,
   GameplayJourney,
+  KnowledgeTurnMeta,
   LibraryEntry,
   SpoilerLevel,
 } from '../types';
@@ -75,6 +78,8 @@ function getToolDisplayName(toolName: string): string {
   switch (toolName) {
     case 'searchGames':
       return 'Catálogo IGDB';
+    case 'searchGameKnowledge':
+      return 'Base de Conhecimento (RAG)';
     case 'getUserLibrary':
       return 'Biblioteca Pessoal';
     case 'getUserPreferences':
@@ -89,6 +94,16 @@ function getToolDisplayName(toolName: string): string {
       return 'Registrar Progresso';
     default:
       return toolName;
+  }
+}
+
+function isSafeHttpUrl(rawUrl?: string | null): boolean {
+  if (!rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
   }
 }
 
@@ -226,8 +241,8 @@ export function CompanionView() {
         ApiService.getLibrary({ limit: 50, sort: 'recentlyUpdated' }),
         ApiService.getAgentConversations({ limit: 30 }),
       ]);
-      setLibraryEntries(libRes.data);
-      setConversations(convRes.data);
+      setLibraryEntries((libRes.data || []).filter((e) => Boolean(e && e.id)));
+      setConversations((convRes.data || []).filter((c) => Boolean(c && c.id)));
     } catch (err: any) {
       setChatError(err.message || 'Erro ao carregar dados iniciais do GameAgent.');
     } finally {
@@ -255,12 +270,13 @@ export function CompanionView() {
     ApiService.getJourneys({ userGameId: entry.id, limit: 30 })
       .then((res) => {
         if (cancelled) return;
-        setJourneys(res.data);
+        const validJourneys = (res.data || []).filter((j) => Boolean(j && j.id));
+        setJourneys(validJourneys);
         setSelectedJourneyId((current) => {
-          if (current && res.data.some((j) => j.id === current)) {
+          if (current && validJourneys.some((j) => j.id === current)) {
             return current;
           }
-          const active = res.data.find((j) => j.isActive);
+          const active = validJourneys.find((j) => j.isActive);
           return active ? active.id : '';
         });
       })
@@ -310,12 +326,13 @@ export function CompanionView() {
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
+    const targetId = deleteTarget?.id;
+    if (!targetId) return;
     setIsDeleting(true);
     try {
-      await ApiService.deleteAgentConversation(deleteTarget.id);
-      setConversations((prev) => prev.filter((c) => c.id !== deleteTarget.id));
-      if (activeConversationId === deleteTarget.id) {
+      await ApiService.deleteAgentConversation(targetId);
+      setConversations((prev) => prev.filter((c) => Boolean(c && c.id && c.id !== targetId)));
+      if (activeConversationId === targetId) {
         handleNewConversation();
       }
       setDeleteTarget(null);
@@ -362,31 +379,43 @@ export function CompanionView() {
         clientRequestId,
       });
 
-      setActiveConversationId(response.conversationId);
+      if (response?.conversationId) {
+        setActiveConversationId(response.conversationId);
+      }
 
       setMessages((prev) => {
-        const withoutTemp = prev.filter((m) => m.id !== tempUserId);
-        const alreadyHasUser = withoutTemp.some((m) => m.id === response.userMessage.id);
-        const alreadyHasReply = withoutTemp.some((m) => m.id === response.reply.id);
+        const withoutTemp = prev.filter((m) => Boolean(m && m.id && m.id !== tempUserId));
         const next = [...withoutTemp];
-        if (!alreadyHasUser) next.push(response.userMessage);
-        if (!alreadyHasReply) next.push(response.reply);
+        if (response?.userMessage?.id && !withoutTemp.some((m) => m.id === response.userMessage.id)) {
+          next.push(response.userMessage);
+        }
+        if (response?.reply?.id && !withoutTemp.some((m) => m.id === response.reply.id)) {
+          next.push(response.reply);
+        }
         return next;
       });
 
-      if (response.pendingActions && response.pendingActions.length > 0) {
+      if (Array.isArray(response?.pendingActions) && response.pendingActions.length > 0) {
         setActionProposals((prev) => {
           const map = new Map<string, AgentActionProposal>();
-          prev.forEach((p) => map.set(p.id, p));
-          response.pendingActions!.forEach((p) => map.set(p.id, p));
+          prev.forEach((p) => {
+            if (p && p.id) map.set(p.id, p);
+          });
+          response.pendingActions!.forEach((p) => {
+            if (p && p.id) map.set(p.id, p);
+          });
           return Array.from(map.values());
         });
       }
 
-      setConversations((prev) => {
-        const filtered = prev.filter((c) => c.id !== response.conversation.id);
-        return [response.conversation, ...filtered];
-      });
+      if (response?.conversation?.id) {
+        setConversations((prev) => {
+          const filtered = prev.filter(
+            (c) => Boolean(c && c.id && c.id !== response.conversation.id)
+          );
+          return [response.conversation, ...filtered];
+        });
+      }
     } catch (err: any) {
       setChatError(err.message || 'Erro ao comunicar com o GameAgent.');
       setPendingRetryPayload({ message: trimmed, clientRequestId });
@@ -425,18 +454,22 @@ export function CompanionView() {
 
     try {
       const res = await ApiService.confirmAgentAction(proposal.id);
-      setActionProposals((prev) =>
-        prev.map((item) => (item.id === res.action.id ? res.action : item))
-      );
-      if (res.followUpMessage) {
+      if (res.action?.id) {
+        setActionProposals((prev) =>
+          prev.map((item) => (item && item.id === res.action.id ? res.action : item))
+        );
+      }
+      if (res.followUpMessage?.id) {
         setMessages((prev) =>
-          prev.some((m) => m.id === res.followUpMessage!.id)
+          prev.some((m) => m && m.id === res.followUpMessage!.id)
             ? prev
             : [...prev, res.followUpMessage!]
         );
       }
       setActionFeedback({ type: 'success', message: res.message });
-      await refreshAfterConfirmedWrite(res.action.toolName);
+      if (res.action?.toolName) {
+        await refreshAfterConfirmedWrite(res.action.toolName);
+      }
     } catch (err: any) {
       if (err?.code === 'ACTION_EXPIRED' || err?.status === 410) {
         setActionProposals((prev) =>
@@ -461,12 +494,14 @@ export function CompanionView() {
 
     try {
       const res = await ApiService.cancelAgentAction(proposal.id);
-      setActionProposals((prev) =>
-        prev.map((item) => (item.id === res.action.id ? res.action : item))
-      );
-      if (res.followUpMessage) {
+      if (res.action?.id) {
+        setActionProposals((prev) =>
+          prev.map((item) => (item && item.id === res.action.id ? res.action : item))
+        );
+      }
+      if (res.followUpMessage?.id) {
         setMessages((prev) =>
-          prev.some((m) => m.id === res.followUpMessage!.id)
+          prev.some((m) => m && m.id === res.followUpMessage!.id)
             ? prev
             : [...prev, res.followUpMessage!]
         );
@@ -860,6 +895,10 @@ export function CompanionView() {
                 const toolsUsed = Array.isArray(msg.metadata?.toolsUsed)
                   ? (msg.metadata!.toolsUsed as AgentToolExecutionTrace[])
                   : [];
+                const knowledge =
+                  msg.metadata?.knowledge && typeof msg.metadata.knowledge === 'object'
+                    ? (msg.metadata.knowledge as KnowledgeTurnMeta)
+                    : null;
 
                 return (
                   <div
@@ -879,16 +918,88 @@ export function CompanionView() {
                             <Bot className="w-3.5 h-3.5" />
                             <span>GameAgent</span>
                           </div>
-                          {grounded && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-emerald-950/70 text-emerald-300 border border-emerald-500/30">
-                              <Database className="w-2.5 h-2.5" />
-                              Baseado em dados reais
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {knowledge?.hasSources && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-sky-950/70 text-sky-300 border border-sky-500/30">
+                                <FileCheck2 className="w-2.5 h-2.5" />
+                                Fundamentado em fontes
+                              </span>
+                            )}
+                            {grounded && !knowledge?.hasSources && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-emerald-950/70 text-emerald-300 border border-emerald-500/30">
+                                <Database className="w-2.5 h-2.5" />
+                                Baseado em dados reais
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
 
                       <div>{msg.content}</div>
+
+                      {!isUser && knowledge && knowledge.references.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1.5">
+                          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-sky-300 uppercase tracking-wider">
+                            <BookOpen className="w-3 h-3 text-sky-400" />
+                            <span>Fontes Consultadas ({knowledge.chunksUsedCount} trecho{knowledge.chunksUsedCount === 1 ? '' : 's'})</span>
+                          </div>
+                          <ul className="space-y-1">
+                            {knowledge.references.map((ref) => (
+                              <li
+                                key={ref.guideId}
+                                className="flex items-center justify-between gap-2 text-[11px] text-slate-300 bg-slate-900/60 border border-slate-800/80 rounded-lg px-2.5 py-1.5"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-200 truncate">
+                                    {ref.title}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap">
+                                    <span>{ref.sourceName}</span>
+                                    {ref.regionOrChapter && <span>· {ref.regionOrChapter}</span>}
+                                    {ref.isVerified && (
+                                      <span className="text-emerald-400">· Verificada</span>
+                                    )}
+                                  </div>
+                                </div>
+                                {isSafeHttpUrl(ref.sourceUrl) && (
+                                  <a
+                                    href={ref.sourceUrl!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[10px] text-sky-300 hover:text-sky-200 shrink-0 underline underline-offset-2"
+                                  >
+                                    <span>Fonte</span>
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {!isUser && knowledge?.spoilerRestricted && (
+                        <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-amber-300">
+                          <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <span>
+                            Filtro anti-spoiler ativo: {knowledge.blockedChunksCount} trecho
+                            {knowledge.blockedChunksCount === 1 ? '' : 's'} omitido
+                            {knowledge.blockedChunksCount === 1 ? '' : 's'} para proteger sua experiência.
+                          </span>
+                        </div>
+                      )}
+
+                      {!isUser &&
+                        knowledge &&
+                        (knowledge.evidenceStatus === 'NO_DOCUMENTS' ||
+                          knowledge.evidenceStatus === 'INSUFFICIENT') && (
+                          <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-slate-400">
+                            <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                            <span>
+                              Informação documental insuficiente na base de conhecimento curada para esta consulta.
+                            </span>
+                          </div>
+                        )}
 
                       {!isUser && toolsUsed.length > 0 && (
                         <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center gap-1.5 flex-wrap">

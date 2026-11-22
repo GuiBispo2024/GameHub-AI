@@ -26,6 +26,7 @@ healthRouter.get('/', async (_req: Request, res: Response) => {
       users: 'ACTIVE',
       library: 'ACTIVE',
       journeys: 'ACTIVE',
+      knowledge: 'ACTIVE',
       companion: 'ACTIVE',
       agent: 'ACTIVE',
     },

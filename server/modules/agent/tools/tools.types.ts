@@ -1,6 +1,7 @@
 import { FunctionDeclaration } from '@google/genai';
 import { z } from 'zod';
-import { AgentModeValue } from '../agent.types';
+import { KnowledgeRetrievalResult } from '../../knowledge/knowledge.types';
+import { AgentModeValue, SpoilerLevelValue } from '../agent.types';
 
 export type ToolAccessType = 'READ' | 'WRITE';
 
@@ -10,6 +11,8 @@ export interface ToolExecutionContext {
   sessionId?: string;
   activeGameId?: string | null;
   activeJourneyId?: string | null;
+  spoilerLevel?: SpoilerLevelValue;
+  onKnowledgeRetrieved?: (result: KnowledgeRetrievalResult) => void;
 }
 
 export interface WriteProposalPreview {

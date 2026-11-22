@@ -18,6 +18,7 @@ export const spoilerLevelInputSchema = z.enum(
     'NONE',
     'LIGHT',
     'ALL',
+    'ALLOW_ALL',
   ],
   {
     message:

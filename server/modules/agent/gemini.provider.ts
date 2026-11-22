@@ -137,6 +137,15 @@ export class GeminiProvider implements AIProvider {
     return config;
   }
 
+  private isTransientProviderFailure(err: any, safeMsg: string, status: number): boolean {
+    if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+      return true;
+    }
+    return /rate limit|quota|resource_exhausted|unavailable|high demand|overloaded|internal|econnreset|etimedout|fetch failed|network/i.test(
+      safeMsg
+    );
+  }
+
   private async invokeSingleGenerateContent(
     client: GoogleGenAI,
     modelName: string,
@@ -144,68 +153,91 @@ export class GeminiProvider implements AIProvider {
     config: Record<string, unknown>,
     timeoutMs: number
   ) {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(
-            new AIProviderError(
-              'O assistente demorou mais do que o esperado para responder. Tente novamente em instantes.',
-              504,
-              'AI_TIMEOUT'
-            )
-          );
-        }, timeoutMs);
-      });
+    const maxAttempts = 2;
 
-      return await Promise.race([
-        client.models.generateContent({
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(
+              new AIProviderError(
+                'O assistente demorou mais do que o esperado para responder. Tente novamente em instantes.',
+                504,
+                'AI_TIMEOUT'
+              )
+            );
+          }, timeoutMs);
+        });
+
+        return await Promise.race([
+          client.models.generateContent({
+            model: modelName,
+            contents,
+            config: config as any,
+          }),
+          timeoutPromise,
+        ]);
+      } catch (err: any) {
+        if (err instanceof AIProviderError) {
+          throw err;
+        }
+
+        const safeMsg = this.sanitizeProviderErrorMessage(err);
+        const status = typeof err?.status === 'number' ? err.status : 0;
+        const canRetry =
+          attempt < maxAttempts && this.isTransientProviderFailure(err, safeMsg, status);
+
+        if (canRetry) {
+          logger.warn('[GeminiProvider] Falha transitória na API Gemini, executando retry', {
+            model: modelName,
+            attempt,
+            status: status || undefined,
+            reason: safeMsg,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 650 * attempt));
+          continue;
+        }
+
+        logger.error('[GeminiProvider] Falha ao gerar resposta', {
           model: modelName,
-          contents,
-          config: config as any,
-        }),
-        timeoutPromise,
-      ]);
-    } catch (err: any) {
-      if (err instanceof AIProviderError) {
-        throw err;
-      }
+          status: status || undefined,
+          reason: safeMsg,
+        });
 
-      const safeMsg = this.sanitizeProviderErrorMessage(err);
-      const status = typeof err?.status === 'number' ? err.status : 0;
+        if (status === 429 || /rate limit|quota|resource_exhausted/i.test(safeMsg)) {
+          throw new AIProviderError(
+            'Limite temporário de requisições ao serviço de IA atingido. Aguarde alguns instantes e tente novamente.',
+            503,
+            'AI_RATE_LIMITED'
+          );
+        }
 
-      logger.error('[GeminiProvider] Falha ao gerar resposta', {
-        model: modelName,
-        status: status || undefined,
-        reason: safeMsg,
-      });
+        if (status === 408 || status === 504 || /timeout|deadline_exceeded|aborted/i.test(safeMsg)) {
+          throw new AIProviderError(
+            'Tempo limite excedido ao consultar o serviço de IA.',
+            504,
+            'AI_TIMEOUT'
+          );
+        }
 
-      if (status === 429 || /rate limit|quota|resource_exhausted/i.test(safeMsg)) {
         throw new AIProviderError(
-          'Limite temporário de requisições ao serviço de IA atingido. Aguarde alguns instantes e tente novamente.',
-          503,
-          'AI_RATE_LIMITED'
+          'Não foi possível obter uma resposta do assistente no momento. Tente novamente em instantes.',
+          502,
+          'AI_PROVIDER_ERROR'
         );
-      }
-
-      if (status === 408 || status === 504 || /timeout|deadline_exceeded|aborted/i.test(safeMsg)) {
-        throw new AIProviderError(
-          'Tempo limite excedido ao consultar o serviço de IA.',
-          504,
-          'AI_TIMEOUT'
-        );
-      }
-
-      throw new AIProviderError(
-        'Não foi possível obter uma resposta do assistente no momento. Tente novamente em instantes.',
-        502,
-        'AI_PROVIDER_ERROR'
-      );
-    } finally {
-      if (timeoutHandle !== undefined) {
-        clearTimeout(timeoutHandle);
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
       }
     }
+
+    throw new AIProviderError(
+      'Não foi possível obter uma resposta do assistente no momento. Tente novamente em instantes.',
+      502,
+      'AI_PROVIDER_ERROR'
+    );
   }
 
   private async callModelWithToolLoop(
@@ -382,7 +414,7 @@ export class GeminiProvider implements AIProvider {
     const contents = this.buildContents(params);
 
     const primaryTimeoutMs = this.fallbackModel
-      ? Math.max(8000, Math.floor(totalTimeoutMs * 0.6))
+      ? Math.max(8000, Math.floor(totalTimeoutMs * 0.65))
       : totalTimeoutMs;
 
     const toolExecutions: AIToolExecutionTrace[] = [];
@@ -403,7 +435,9 @@ export class GeminiProvider implements AIProvider {
       const canFallback =
         this.fallbackModel &&
         primaryErr instanceof AIProviderError &&
-        (primaryErr.code === 'AI_TIMEOUT' || primaryErr.code === 'AI_RATE_LIMITED');
+        (primaryErr.code === 'AI_TIMEOUT' ||
+          primaryErr.code === 'AI_RATE_LIMITED' ||
+          primaryErr.code === 'AI_PROVIDER_ERROR');
 
       if (!canFallback) {
         throw primaryErr;

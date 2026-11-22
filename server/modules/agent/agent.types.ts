@@ -1,3 +1,4 @@
+import { KnowledgeTurnMeta } from '../knowledge/knowledge.types';
 import { AIToolExecutionTrace } from './ai.provider';
 
 export type AgentModeValue = 'LIBRARY' | 'COMPANION';
@@ -26,7 +27,7 @@ export interface ChatRequestInput {
   conversationId?: string | null;
   gameId?: string | null;
   journeyId?: string | null;
-  spoilerLevel?: SpoilerLevelValue | 'NONE' | 'LIGHT' | 'ALL' | null;
+  spoilerLevel?: SpoilerLevelValue | 'NONE' | 'LIGHT' | 'ALL' | 'ALLOW_ALL' | null;
   title?: string | null;
   clientRequestId?: string | null;
 }
@@ -120,6 +121,7 @@ export interface AgentChatResponseDTO {
   groundedInRealData?: boolean;
   toolsUsed?: AIToolExecutionTrace[];
   pendingActions?: AgentActionProposalDTO[];
+  knowledge?: KnowledgeTurnMeta;
   contextUsed: {
     gameId: string | null;
     gameTitle: string | null;

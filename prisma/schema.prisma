@@ -16,12 +16,18 @@ datasource db {
 // 1. USUÁRIOS E PREFERÊNCIAS
 // ---------------------------------------------------------
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 // User model for authentication, profile and relations
 model User {
   id           String    @id @default(uuid())
   email        String    @unique
   username     String    @unique
   passwordHash String
+  role         UserRole  @default(USER)
   avatarUrl    String?
   bio          String?
   createdAt    DateTime  @default(now())
@@ -100,6 +106,7 @@ model Game {
   companionSessions CompanionSession[]
   builds            GameBuild[]
   guides            GameGuide[]
+  guideChunks       GameGuideChunk[]
 
   @@index([slug])
   @@index([name])
@@ -349,31 +356,70 @@ model AgentActionProposal {
 }
 
 // ---------------------------------------------------------
-// 6. GUIAS ASSOCIADOS AOS JOGOS
+// 6. BASE DE CONHECIMENTO (GUIAS E TRECHOS PARA RAG)
 // ---------------------------------------------------------
 
-// Walkthroughs, boss strategies, routes and collectible guides
+// Authorized gameplay guides, walkthroughs, boss strategies, builds and lore documents
 model GameGuide {
-  id           String       @id @default(uuid())
-  gameId       String
-  authorId     String?      // Nullable if system/companion-generated or community guide
-  title        String
-  slug         String
-  category     String       // e.g. "BOSS_STRATEGY", "WALKTHROUGH", "BUILD_GUIDE", "TROPHY_HUNT", "SECRETS"
-  content      String       // Guide content (Markdown supported)
-  spoilerLevel SpoilerLevel @default(CURRENT_CHAPTER)
-  targetChapter String?
-  upvotes      Int          @default(0)
-  isVerified   Boolean      @default(false)
-  tags         String[]     @default([])
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id               String       @id @default(uuid())
+  gameId           String
+  authorId         String?      // Nullable if system/admin-curated guide
+  title            String
+  slug             String
+  category         String       // e.g. "BOSS_STRATEGY", "WALKTHROUGH", "BUILD_GUIDE", "MECHANICS", "SECRETS"
+  contentType      String       @default("GUIDE") // WALKTHROUGH, BOSS_STRATEGY, BUILD_GUIDE, MECHANICS, LORE, TROPHY_HUNT, GUIDE
+  content          String       // Full authorized guide content (Markdown supported)
+  sourceName       String       @default("GameHub Editorial")
+  sourceUrl        String?
+  sourceLicense    String       @default("AUTHORIZED_CURATED")
+  language         String       @default("pt-BR")
+  spoilerLevel     SpoilerLevel @default(CURRENT_CHAPTER)
+  targetChapter    String?
+  regionOrChapter  String?
+  progressionOrder Int?
+  obtainedAt       DateTime     @default(now())
+  upvotes          Int          @default(0)
+  isVerified       Boolean      @default(false)
+  isActive         Boolean      @default(true)
+  tags             String[]     @default([])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  game   Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  game   Game             @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  author User?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  chunks GameGuideChunk[]
 
   @@unique([gameId, slug])
   @@index([gameId, category])
+  @@index([gameId, spoilerLevel, isActive])
   @@index([authorId])
   @@map("game_guides")
+}
+
+// Searchable RAG chunks derived from authorized GameGuide documents
+model GameGuideChunk {
+  id               String       @id @default(uuid())
+  guideId          String
+  gameId           String
+  chunkIndex       Int
+  heading          String?
+  content          String
+  tokenCount       Int          @default(0)
+  charCount        Int          @default(0)
+  spoilerLevel     SpoilerLevel @default(CURRENT_CHAPTER)
+  regionOrChapter  String?
+  progressionOrder Int?
+  language         String       @default("pt-BR")
+  tags             String[]     @default([])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  guide GameGuide @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  game  Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([guideId, chunkIndex])
+  @@index([gameId, spoilerLevel])
+  @@index([gameId, progressionOrder])
+  @@index([guideId])
+  @@map("game_guide_chunks")
 }

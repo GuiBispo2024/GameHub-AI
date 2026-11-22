@@ -215,6 +215,7 @@ A API suporta autenticação state-aware via:
               users: { type: 'string', example: 'ACTIVE' },
               library: { type: 'string', example: 'ACTIVE' },
               journeys: { type: 'string', example: 'ACTIVE' },
+              knowledge: { type: 'string', example: 'ACTIVE' },
               companion: { type: 'string', example: 'ACTIVE' },
               agent: { type: 'string', example: 'ACTIVE' },
             },
@@ -739,6 +740,7 @@ A API suporta autenticação state-aware via:
             items: { $ref: '#/components/schemas/AgentActionProposal' },
             description: 'Propostas de escrita aguardando confirmação explícita do usuário na interface.',
           },
+          knowledge: { $ref: '#/components/schemas/KnowledgeTurnMeta' },
           contextUsed: {
             type: 'object',
             properties: {
@@ -752,6 +754,165 @@ A API suporta autenticação state-aware via:
           userMessage: { $ref: '#/components/schemas/AgentMessage' },
           reply: { $ref: '#/components/schemas/AgentMessage' },
           conversation: { $ref: '#/components/schemas/AgentConversationSummary' },
+        },
+      },
+      KnowledgeReference: {
+        type: 'object',
+        properties: {
+          guideId: { type: 'string', format: 'uuid' },
+          title: { type: 'string', example: 'Guia de Combate em Limgrave — Elden Ring' },
+          sourceName: { type: 'string', example: 'GameHub Editorial' },
+          sourceUrl: { type: 'string', format: 'uri', nullable: true, example: 'https://gamehub.ai/guides/limgrave' },
+          sourceLicense: { type: 'string', example: 'AUTHORIZED_CURATED' },
+          obtainedAt: { type: 'string', format: 'date-time' },
+          isVerified: { type: 'boolean', example: true },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED'],
+          },
+          regionOrChapter: { type: 'string', nullable: true, example: 'Limgrave' },
+          contentType: { type: 'string', example: 'BOSS_STRATEGY' },
+        },
+      },
+      KnowledgeTurnMeta: {
+        type: 'object',
+        properties: {
+          hasSources: { type: 'boolean', example: true },
+          evidenceStatus: {
+            type: 'string',
+            enum: ['SUFFICIENT', 'INSUFFICIENT', 'BLOCKED_BY_SPOILERS', 'NO_DOCUMENTS'],
+            example: 'SUFFICIENT',
+          },
+          spoilerRestricted: { type: 'boolean', example: false },
+          blockedChunksCount: { type: 'integer', example: 0 },
+          chunksUsedCount: { type: 'integer', example: 3 },
+          references: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/KnowledgeReference' },
+          },
+        },
+      },
+      KnowledgeChunkSummary: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          guideId: { type: 'string', format: 'uuid' },
+          chunkIndex: { type: 'integer', example: 0 },
+          heading: { type: 'string', nullable: true, example: 'Estratégia Inicial contra Margit' },
+          content: { type: 'string' },
+          charCount: { type: 'integer', example: 420 },
+          tokenCount: { type: 'integer', example: 68 },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED'],
+          },
+          regionOrChapter: { type: 'string', nullable: true },
+          progressionOrder: { type: 'integer', nullable: true },
+          language: { type: 'string', example: 'pt-BR' },
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      KnowledgeGuide: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          gameId: { type: 'string', format: 'uuid' },
+          gameTitle: { type: 'string', example: 'Elden Ring' },
+          authorId: { type: 'string', format: 'uuid', nullable: true },
+          title: { type: 'string', example: 'Guia de Combate em Limgrave' },
+          slug: { type: 'string', example: 'guia-de-combate-em-limgrave' },
+          category: { type: 'string', example: 'GUIDE' },
+          contentType: {
+            type: 'string',
+            enum: ['GUIDE', 'WALKTHROUGH', 'BOSS_STRATEGY', 'BUILD_GUIDE', 'MECHANICS', 'LORE', 'TROPHY_HUNT'],
+          },
+          content: { type: 'string' },
+          sourceName: { type: 'string', example: 'GameHub Editorial' },
+          sourceUrl: { type: 'string', format: 'uri', nullable: true },
+          sourceLicense: { type: 'string', example: 'AUTHORIZED_CURATED' },
+          language: { type: 'string', example: 'pt-BR' },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED'],
+          },
+          regionOrChapter: { type: 'string', nullable: true, example: 'Limgrave' },
+          progressionOrder: { type: 'integer', nullable: true, example: 1 },
+          obtainedAt: { type: 'string', format: 'date-time' },
+          isVerified: { type: 'boolean', example: true },
+          isActive: { type: 'boolean', example: true },
+          tags: { type: 'array', items: { type: 'string' } },
+          chunkCount: { type: 'integer', example: 4 },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      CreateKnowledgeGuideRequest: {
+        type: 'object',
+        required: ['gameId', 'title', 'content'],
+        properties: {
+          gameId: { type: 'string', format: 'uuid' },
+          title: { type: 'string', minLength: 3, maxLength: 180 },
+          slug: { type: 'string' },
+          category: { type: 'string', default: 'GUIDE' },
+          contentType: {
+            type: 'string',
+            enum: ['GUIDE', 'WALKTHROUGH', 'BOSS_STRATEGY', 'BUILD_GUIDE', 'MECHANICS', 'LORE', 'TROPHY_HUNT'],
+            default: 'GUIDE',
+          },
+          content: { type: 'string', minLength: 20, maxLength: 100000 },
+          sourceName: { type: 'string', default: 'GameHub Editorial' },
+          sourceUrl: { type: 'string', format: 'uri', nullable: true },
+          sourceLicense: { type: 'string', default: 'AUTHORIZED_CURATED' },
+          language: { type: 'string', default: 'pt-BR' },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED', 'NONE', 'LIGHT', 'ALL', 'ALLOW_ALL'],
+            default: 'CURRENT_CHAPTER',
+          },
+          regionOrChapter: { type: 'string', nullable: true },
+          progressionOrder: { type: 'integer', minimum: 1, maximum: 1000, nullable: true },
+          obtainedAt: { type: 'string', format: 'date-time' },
+          isVerified: { type: 'boolean', default: true },
+          isActive: { type: 'boolean', default: true },
+          tags: { type: 'array', items: { type: 'string' } },
+          maxChunkChars: { type: 'integer', minimum: 250, maximum: 2500 },
+          chunkOverlapChars: { type: 'integer', minimum: 0, maximum: 400 },
+        },
+      },
+      UpdateKnowledgeGuideRequest: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', minLength: 3, maxLength: 180 },
+          category: { type: 'string' },
+          contentType: {
+            type: 'string',
+            enum: ['GUIDE', 'WALKTHROUGH', 'BOSS_STRATEGY', 'BUILD_GUIDE', 'MECHANICS', 'LORE', 'TROPHY_HUNT'],
+          },
+          content: { type: 'string', minLength: 20, maxLength: 100000 },
+          sourceName: { type: 'string' },
+          sourceUrl: { type: 'string', format: 'uri', nullable: true },
+          sourceLicense: { type: 'string' },
+          language: { type: 'string' },
+          spoilerLevel: {
+            type: 'string',
+            enum: ['STRICT_NO_SPOILERS', 'CURRENT_CHAPTER', 'MID_GAME_SAFE', 'FULL_UNRESTRICTED', 'NONE', 'LIGHT', 'ALL', 'ALLOW_ALL'],
+          },
+          regionOrChapter: { type: 'string', nullable: true },
+          progressionOrder: { type: 'integer', minimum: 1, maximum: 1000, nullable: true },
+          obtainedAt: { type: 'string', format: 'date-time' },
+          isVerified: { type: 'boolean' },
+          isActive: { type: 'boolean' },
+          tags: { type: 'array', items: { type: 'string' } },
+          maxChunkChars: { type: 'integer', minimum: 250, maximum: 2500 },
+          chunkOverlapChars: { type: 'integer', minimum: 0, maximum: 400 },
+        },
+      },
+      RechunkGuideRequest: {
+        type: 'object',
+        properties: {
+          maxChunkChars: { type: 'integer', minimum: 250, maximum: 2500 },
+          minChunkChars: { type: 'integer', minimum: 40, maximum: 400 },
+          chunkOverlapChars: { type: 'integer', minimum: 0, maximum: 400 },
         },
       },
     },
@@ -2178,6 +2339,194 @@ A API suporta autenticação state-aware via:
           '404': { description: 'Proposta não encontrada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '409': { description: 'Ação já executada ou previamente cancelada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '410': { description: 'Proposta de ação já expirada.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/knowledge/guides': {
+      post: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Cadastrar novo guia autorizado e gerar chunks indexados (ADMIN)',
+        description:
+          'Exige usuário autenticado com role ADMIN. Valida jogo associado, URL segura (anti-SSRF/XSS), unicidade por jogo e realiza chunking automático indexado via GIN FTS no PostgreSQL.',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/CreateKnowledgeGuideRequest' } },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Documento cadastrado e fragmentado com sucesso.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/KnowledgeGuide' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Dados inválidos ou URL de fonte insegura.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Jogo associado não encontrado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Documento duplicado para o mesmo jogo.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      get: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Listar documentos da base de conhecimento (ADMIN)',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, minimum: 1, maximum: 50 } },
+          { name: 'gameId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'category', in: 'query', schema: { type: 'string' } },
+          { name: 'spoilerLevel', in: 'query', schema: { type: 'string' } },
+          { name: 'search', in: 'query', schema: { type: 'string' } },
+          { name: 'isActive', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+        ],
+        responses: {
+          '200': {
+            description: 'Lista paginada de guias cadastrados.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    data: { type: 'array', items: { $ref: '#/components/schemas/KnowledgeGuide' } },
+                    pagination: { $ref: '#/components/schemas/PaginationMeta' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/knowledge/guides/{id}': {
+      get: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Consultar guia com seus chunks gerados (ADMIN)',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': {
+            description: 'Documento e chunks retornados com sucesso.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    data: {
+                      allOf: [
+                        { $ref: '#/components/schemas/KnowledgeGuide' },
+                        {
+                          type: 'object',
+                          properties: {
+                            chunks: { type: 'array', items: { $ref: '#/components/schemas/KnowledgeChunkSummary' } },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Documento não encontrado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      patch: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Atualizar metadados ou conteúdo de um guia e reindexar chunks (ADMIN)',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/UpdateKnowledgeGuideRequest' } },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Documento atualizado com sucesso.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/KnowledgeGuide' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Dados inválidos.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Documento não encontrado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '409': { description: 'Conflito com documento existente.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+      delete: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Excluir documento e todos os seus chunks indexados (ADMIN)',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '204': { description: 'Documento removido com sucesso.' },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Documento não encontrado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
+    '/api/knowledge/guides/{id}/rechunk': {
+      post: {
+        tags: ['Base de Conhecimento (RAG)'],
+        summary: 'Reprocessar fragmentação (chunking) de um guia existente (ADMIN)',
+        security: [{ cookieAuth: [] }, { bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/RechunkGuideRequest' } },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Chunks reprocessados com sucesso.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', example: 'success' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/KnowledgeGuide' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Parâmetros de chunking inválidos.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Não autenticado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '403': { description: 'Acesso restrito a administradores (ADMIN_REQUIRED).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Documento não encontrado.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

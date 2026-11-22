@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../../db/prisma';
+import { hasUserRoleColumn } from '../../db/user-compat';
 import { ENV } from '../../config/env';
 import { RegisterInput, LoginInput } from './auth.schema';
 
@@ -8,6 +9,7 @@ export interface UserPublicData {
   id: string;
   email: string;
   username: string;
+  role: 'USER' | 'ADMIN';
   avatarUrl: string | null;
   bio: string | null;
   createdAt: Date;
@@ -27,9 +29,12 @@ export class AuthService {
     const normalizedEmail = input.email.trim().toLowerCase();
     const normalizedUsername = input.username.trim();
 
+    const includeRole = await hasUserRoleColumn();
+
     // 1. Check for email duplication
     const existingEmail = await prisma.user.findUnique({
       where: { email: normalizedEmail },
+      select: { id: true },
     });
     if (existingEmail) {
       const error: any = new Error('Este endereço de email já está cadastrado.');
@@ -41,6 +46,7 @@ export class AuthService {
     // 2. Check for username duplication
     const existingUsername = await prisma.user.findUnique({
       where: { username: normalizedUsername },
+      select: { id: true },
     });
     if (existingUsername) {
       const error: any = new Error('Este nome de usuário já está em uso.');
@@ -64,6 +70,15 @@ export class AuthService {
           email: normalizedEmail,
           username: normalizedUsername,
           passwordHash,
+        },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          avatarUrl: true,
+          bio: true,
+          createdAt: true,
+          ...(includeRole ? { role: true } : {}),
         },
       });
 
@@ -103,6 +118,7 @@ export class AuthService {
         id: newUser.id,
         email: newUser.email,
         username: newUser.username,
+        role: includeRole && (newUser as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
         avatarUrl: newUser.avatarUrl,
         bio: newUser.bio,
         createdAt: newUser.createdAt,
@@ -117,11 +133,22 @@ export class AuthService {
    */
   static async login(input: LoginInput): Promise<AuthResult> {
     const normalizedEmail = input.email.trim().toLowerCase();
+    const includeRole = await hasUserRoleColumn();
 
     // 1. Look up user by email
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
-      include: { preferences: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        passwordHash: true,
+        avatarUrl: true,
+        bio: true,
+        createdAt: true,
+        ...(includeRole ? { role: true } : {}),
+        preferences: true,
+      },
     });
 
     // Uniform 401 error message to prevent account enumeration
@@ -170,6 +197,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         username: user.username,
+        role: includeRole && (user as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
         avatarUrl: user.avatarUrl,
         bio: user.bio,
         createdAt: user.createdAt,
@@ -183,9 +211,19 @@ export class AuthService {
    * Retrieves authenticated user data and preferences by ID.
    */
   static async getMe(userId: string): Promise<UserPublicData> {
+    const includeRole = await hasUserRoleColumn();
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: { preferences: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        avatarUrl: true,
+        bio: true,
+        createdAt: true,
+        ...(includeRole ? { role: true } : {}),
+        preferences: true,
+      },
     });
 
     if (!user) {
@@ -198,6 +236,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       username: user.username,
+      role: includeRole && (user as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
       avatarUrl: user.avatarUrl,
       bio: user.bio,
       createdAt: user.createdAt,

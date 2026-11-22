@@ -77,7 +77,9 @@ describe('GameHub AI — GameAgent + Gemini API + Chat Persistente (Fase 3, Tare
 
   beforeAll(async () => {
     const isolation = assertDatabaseIsolation();
-    expect(isolation.testEndpoint).toBe('ep-cool-salad-b6cynjgj');
+    expect(isolation.safe).toBe(true);
+    expect(isolation.testEndpoint).toBe('ep-mute-frost-b6xo7qjs');
+    expect(isolation.testEndpoint).not.toBe(isolation.prodEndpoint);
 
     const resA = await request(app).post('/api/auth/register').send(userA);
     expect(resA.status).toBe(201);

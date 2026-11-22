@@ -1,4 +1,5 @@
 import { prisma } from '../../db/prisma';
+import { hasUserRoleColumn } from '../../db/user-compat';
 import { UpdateUserInput, UpdatePreferencesInput } from './user.schema';
 
 export class UserService {
@@ -37,9 +38,19 @@ export class UserService {
   }
 
   static async getProfile(userId: string) {
+    const includeRole = await hasUserRoleColumn();
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: { preferences: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        avatarUrl: true,
+        bio: true,
+        createdAt: true,
+        ...(includeRole ? { role: true } : {}),
+        preferences: true,
+      },
     });
 
     if (!user) {
@@ -52,6 +63,7 @@ export class UserService {
       id: user.id,
       email: user.email,
       username: user.username,
+      role: includeRole && (user as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
       avatarUrl: user.avatarUrl,
       bio: user.bio,
       createdAt: user.createdAt,
@@ -65,9 +77,12 @@ export class UserService {
   }
 
   static async updateProfile(userId: string, input: UpdateUserInput) {
+    const includeRole = await hasUserRoleColumn();
+
     // 1. Verify user exists
     const currentUser = await prisma.user.findUnique({
       where: { id: userId },
+      select: { id: true, username: true },
     });
 
     if (!currentUser) {
@@ -81,6 +96,7 @@ export class UserService {
       const normalizedUsername = input.username.trim();
       const duplicate = await prisma.user.findUnique({
         where: { username: normalizedUsername },
+        select: { id: true },
       });
 
       if (duplicate && duplicate.id !== userId) {
@@ -99,13 +115,23 @@ export class UserService {
         ...(input.bio !== undefined ? { bio: input.bio } : {}),
         ...(input.avatarUrl !== undefined ? { avatarUrl: input.avatarUrl || null } : {}),
       },
-      include: { preferences: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        avatarUrl: true,
+        bio: true,
+        createdAt: true,
+        ...(includeRole ? { role: true } : {}),
+        preferences: true,
+      },
     });
 
     return {
       id: updatedUser.id,
       email: updatedUser.email,
       username: updatedUser.username,
+      role: includeRole && (updatedUser as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
       avatarUrl: updatedUser.avatarUrl,
       bio: updatedUser.bio,
       createdAt: updatedUser.createdAt,

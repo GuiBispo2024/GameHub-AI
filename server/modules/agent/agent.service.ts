@@ -34,6 +34,12 @@ import {
   AIToolExecutionTrace,
 } from './ai.provider';
 import { GeminiProvider } from './gemini.provider';
+import {
+  EvidenceStatus,
+  KnowledgeReferenceDTO,
+  KnowledgeRetrievalResult,
+  KnowledgeTurnMeta,
+} from '../knowledge/knowledge.types';
 import { ToolsRegistry, defaultToolsRegistry } from './tools/tools.registry';
 import { ToolExecutionContext } from './tools/tools.types';
 
@@ -59,11 +65,60 @@ export function normalizeSpoilerLevel(
     case 'MID_GAME_SAFE':
       return 'MID_GAME_SAFE';
     case 'ALL':
+    case 'ALLOW_ALL':
     case 'FULL_UNRESTRICTED':
       return 'FULL_UNRESTRICTED';
     default:
       return fallback;
   }
+}
+
+function aggregateKnowledgeMeta(
+  results: KnowledgeRetrievalResult[]
+): KnowledgeTurnMeta | undefined {
+  if (results.length === 0) return undefined;
+
+  const refsMap = new Map<string, KnowledgeReferenceDTO>();
+  const uniqueChunkIds = new Set<string>();
+  let blockedChunksCount = 0;
+  let spoilerRestricted = false;
+
+  for (const res of results) {
+    if (res.spoilerRestricted) spoilerRestricted = true;
+    blockedChunksCount += res.blockedChunksCount || 0;
+
+    for (const chunk of res.chunks) {
+      uniqueChunkIds.add(chunk.chunkId);
+    }
+    for (const ref of res.references) {
+      if (!refsMap.has(ref.guideId)) {
+        refsMap.set(ref.guideId, ref);
+      }
+    }
+  }
+
+  const chunksUsedCount = uniqueChunkIds.size;
+  const references = Array.from(refsMap.values());
+
+  let evidenceStatus: EvidenceStatus;
+  if (chunksUsedCount > 0) {
+    evidenceStatus = 'SUFFICIENT';
+  } else if (results.some((r) => r.evidenceStatus === 'BLOCKED_BY_SPOILERS')) {
+    evidenceStatus = 'BLOCKED_BY_SPOILERS';
+  } else if (results.some((r) => r.evidenceStatus === 'INSUFFICIENT')) {
+    evidenceStatus = 'INSUFFICIENT';
+  } else {
+    evidenceStatus = 'NO_DOCUMENTS';
+  }
+
+  return {
+    hasSources: chunksUsedCount > 0 && references.length > 0,
+    evidenceStatus,
+    spoilerRestricted,
+    blockedChunksCount,
+    chunksUsedCount,
+    references,
+  };
 }
 
 function buildAutoConversationTitle(
@@ -370,6 +425,11 @@ export class GameAgent {
                   )
                 : [];
 
+            const knowledgeMeta =
+              meta.knowledge && typeof meta.knowledge === 'object'
+                ? (meta.knowledge as KnowledgeTurnMeta)
+                : undefined;
+
             return {
               status: 'success',
               conversationId: existingSession.id,
@@ -382,6 +442,7 @@ export class GameAgent {
                 ? (meta.toolsUsed as AIToolExecutionTrace[])
                 : undefined,
               pendingActions: linkedProposals.length > 0 ? linkedProposals : undefined,
+              ...(knowledgeMeta ? { knowledge: knowledgeMeta } : {}),
               contextUsed: {
                 gameId: summary.gameId,
                 gameTitle: summary.game?.title ?? null,
@@ -544,14 +605,19 @@ export class GameAgent {
         availableTools: availableToolNames,
       });
 
+      const createdProposals: AgentActionProposalDTO[] = [];
+      const knowledgeResults: KnowledgeRetrievalResult[] = [];
       const toolCtx: ToolExecutionContext = {
         userId,
         mode: effectiveMode,
         sessionId: session.id,
         activeGameId: resolvedGameId,
         activeJourneyId: resolvedJourneyId,
+        spoilerLevel: effectiveSpoilerLevel,
+        onKnowledgeRetrieved: (res) => {
+          knowledgeResults.push(res);
+        },
       };
-      const createdProposals: AgentActionProposalDTO[] = [];
 
       // 10. Invoke AIProvider with Function Calling, timeout, token limits and sanitized telemetry
       const startedAt = Date.now();
@@ -571,11 +637,13 @@ export class GameAgent {
         });
 
         const durationMs = Date.now() - startedAt;
+        const knowledgeMeta = aggregateKnowledgeMeta(knowledgeResults);
         const executedReadTools = (aiResult.toolExecutions || []).some(
           (t) => t.accessType === 'READ' && t.status === 'EXECUTED'
         );
         const groundedInRealData = Boolean(
           executedReadTools ||
+            knowledgeMeta?.hasSources ||
             journeyContext !== null ||
             gameContext !== null ||
             (librarySummary && librarySummary.length > 0)
@@ -600,6 +668,7 @@ export class GameAgent {
             groundedInRealData,
             toolsUsed: aiResult.toolExecutions ?? [],
             pendingActionIds: createdProposals.map((p) => p.id),
+            ...(knowledgeMeta ? { knowledge: knowledgeMeta } : {}),
           },
         });
 
@@ -611,6 +680,8 @@ export class GameAgent {
           model: aiResult.model,
           toolCallsCount: aiResult.toolExecutions?.length ?? 0,
           pendingActionsCount: createdProposals.length,
+          knowledgeChunksUsed: knowledgeMeta?.chunksUsedCount ?? 0,
+          knowledgeBlockedCount: knowledgeMeta?.blockedChunksCount ?? 0,
           promptTokens: aiResult.usage?.promptTokens,
           candidatesTokens: aiResult.usage?.candidatesTokens,
           totalTokens: aiResult.usage?.totalTokens,
@@ -628,6 +699,7 @@ export class GameAgent {
             ? { toolsUsed: aiResult.toolExecutions }
             : {}),
           ...(createdProposals.length > 0 ? { pendingActions: createdProposals } : {}),
+          ...(knowledgeMeta ? { knowledge: knowledgeMeta } : {}),
           contextUsed: {
             gameId: gameContext?.id ?? null,
             gameTitle: gameContext?.title ?? null,

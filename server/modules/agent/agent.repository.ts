@@ -122,7 +122,11 @@ export class AgentRepository {
   async findUserWithPreferences(userId: string) {
     return prisma.user.findUnique({
       where: { id: userId },
-      include: { preferences: true },
+      select: {
+        id: true,
+        username: true,
+        preferences: true,
+      },
     });
   }
 

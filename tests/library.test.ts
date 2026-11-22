@@ -42,7 +42,9 @@ describe('GameHub AI — Biblioteca Pessoal de Jogos (Fase 2, Tarefa 5)', () => 
   beforeAll(async () => {
     // Ensure strict testing branch isolation
     const isolation = assertDatabaseIsolation();
-    expect(isolation.testEndpoint).toBe('ep-cool-salad-b6cynjgj');
+    expect(isolation.safe).toBe(true);
+    expect(isolation.testEndpoint).toBe('ep-mute-frost-b6xo7qjs');
+    expect(isolation.testEndpoint).not.toBe(isolation.prodEndpoint);
 
     // Register User A and User B
     const resA = await request(app).post('/api/auth/register').send(userA);

@@ -8,6 +8,7 @@ import { createGetJourneyContextTool } from './get-journey-context.tool';
 import { createGetUserLibraryTool } from './get-user-library.tool';
 import { createGetUserPreferencesTool } from './get-user-preferences.tool';
 import { createSearchGamesTool } from './search-games.tool';
+import { createSearchGameKnowledgeTool } from './search-game-knowledge.tool';
 import {
   AgentToolDefinition,
   ToolExecutionContext,
@@ -53,6 +54,7 @@ export class ToolsRegistry {
   constructor(tools?: AgentToolDefinition[]) {
     const initialTools = tools ?? [
       createSearchGamesTool(),
+      createSearchGameKnowledgeTool(),
       createGetUserLibraryTool(),
       createGetUserPreferencesTool(),
       createGetJourneyContextTool(),
@@ -117,6 +119,14 @@ export class ToolsRegistry {
     if ('userId' in candidateObj) {
       throw createToolError(
         'Parâmetro "userId" não é permitido nas chamadas de ferramentas.',
+        400,
+        'FORBIDDEN_TOOL_PARAMETER'
+      );
+    }
+
+    if ('spoilerLevel' in candidateObj) {
+      throw createToolError(
+        'Parâmetro "spoilerLevel" é controlado exclusivamente pelo backend autenticado.',
         400,
         'FORBIDDEN_TOOL_PARAMETER'
       );

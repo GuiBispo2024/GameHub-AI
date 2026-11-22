@@ -15,6 +15,7 @@ import {
 import { GeminiProvider } from '../server/modules/agent/gemini.provider';
 import { ToolsRegistry, defaultToolsRegistry } from '../server/modules/agent/tools/tools.registry';
 import { createSearchGamesTool } from '../server/modules/agent/tools/search-games.tool';
+import { createSearchGameKnowledgeTool } from '../server/modules/agent/tools/search-game-knowledge.tool';
 import { createGetUserLibraryTool } from '../server/modules/agent/tools/get-user-library.tool';
 import { createGetUserPreferencesTool } from '../server/modules/agent/tools/get-user-preferences.tool';
 import { createGetJourneyContextTool } from '../server/modules/agent/tools/get-journey-context.tool';
@@ -139,7 +140,8 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
 
   beforeAll(async () => {
     const isolation = assertDatabaseIsolation();
-    expect(isolation.testEndpoint).toBe('ep-cool-salad-b6cynjgj');
+    expect(isolation.safe).toBe(true);
+    expect(isolation.testEndpoint).toBe('ep-mute-frost-b6xo7qjs');
     expect(isolation.testEndpoint).not.toBe(isolation.prodEndpoint);
 
     const resA = await request(app).post('/api/auth/register').send(userA);
@@ -353,13 +355,14 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
     await prisma.user.deleteMany({ where: { id: { in: [userAId, userBId] } } });
   });
 
-  it('1. Registro centralizado contém todas as 7 ferramentas com classificação READ/WRITE e FunctionDeclarations', () => {
+  it('1. Registro centralizado contém todas as ferramentas com classificação READ/WRITE e FunctionDeclarations', () => {
     const allTools = defaultToolsRegistry.listTools();
     const names = allTools.map((t) => t.name);
 
     expect(names).toEqual(
       expect.arrayContaining([
         'searchGames',
+        'searchGameKnowledge',
         'getUserLibrary',
         'getUserPreferences',
         'getJourneyContext',
@@ -368,9 +371,10 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
         'updateGameProgress',
       ])
     );
-    expect(names.length).toBe(7);
+    expect(names.length).toBe(8);
 
     expect(defaultToolsRegistry.getTool('searchGames')?.accessType).toBe('READ');
+    expect(defaultToolsRegistry.getTool('searchGameKnowledge')?.accessType).toBe('READ');
     expect(defaultToolsRegistry.getTool('getUserLibrary')?.accessType).toBe('READ');
     expect(defaultToolsRegistry.getTool('getUserPreferences')?.accessType).toBe('READ');
     expect(defaultToolsRegistry.getTool('getJourneyContext')?.accessType).toBe('READ');
@@ -379,12 +383,12 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
     expect(defaultToolsRegistry.getTool('updateGameProgress')?.accessType).toBe('WRITE');
 
     const declarations = defaultToolsRegistry.getFunctionDeclarations('COMPANION');
-    expect(declarations.length).toBe(7);
+    expect(declarations.length).toBe(8);
   });
 
   it('2. Seleção e execução de ferramenta pelo agente via Function Calling gera toolsUsed e groundedInRealData', async () => {
     mockProvider.handler = async (params) => {
-      expect(params.tools?.length).toBe(7);
+      expect(params.tools?.length).toBe(8);
       const prefsCall = await params.onToolCall!({
         id: 'call-1',
         name: 'getUserPreferences',
@@ -942,6 +946,7 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
     } finally {
       const restored = new ToolsRegistry([
         createSearchGamesTool(mockGamesService),
+        createSearchGameKnowledgeTool(),
         createGetUserLibraryTool(),
         createGetUserPreferencesTool(),
         createGetJourneyContextTool(),
@@ -1157,7 +1162,9 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
 
   it('24. Isolamento do banco testing e índice parcial único de idempotência no PostgreSQL estão ativos', async () => {
     const isolation = assertDatabaseIsolation();
-    expect(isolation.testEndpoint).toBe('ep-cool-salad-b6cynjgj');
+    expect(isolation.safe).toBe(true);
+    expect(isolation.testEndpoint).toBe('ep-mute-frost-b6xo7qjs');
+    expect(isolation.testEndpoint).not.toBe(isolation.prodEndpoint);
 
     const indexCheck = await prisma.$queryRaw<Array<{ indexname: string }>>`
       SELECT indexname

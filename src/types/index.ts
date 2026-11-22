@@ -284,6 +284,34 @@ export interface AgentActionProposal {
   createdAt: string;
 }
 
+export type KnowledgeEvidenceStatus =
+  | 'SUFFICIENT'
+  | 'INSUFFICIENT'
+  | 'BLOCKED_BY_SPOILERS'
+  | 'NO_DOCUMENTS';
+
+export interface KnowledgeReference {
+  guideId: string;
+  title: string;
+  sourceName: string;
+  sourceUrl: string | null;
+  sourceLicense: string;
+  obtainedAt: string;
+  isVerified: boolean;
+  spoilerLevel: SpoilerLevel;
+  regionOrChapter: string | null;
+  contentType: string;
+}
+
+export interface KnowledgeTurnMeta {
+  hasSources: boolean;
+  evidenceStatus: KnowledgeEvidenceStatus;
+  spoilerRestricted: boolean;
+  blockedChunksCount: number;
+  chunksUsedCount: number;
+  references: KnowledgeReference[];
+}
+
 export interface AgentConversationDetail extends AgentConversationSummary {
   messages: AgentMessage[];
   actionProposals?: AgentActionProposal[];
@@ -299,6 +327,7 @@ export interface AgentChatResponse {
   groundedInRealData?: boolean;
   toolsUsed?: AgentToolExecutionTrace[];
   pendingActions?: AgentActionProposal[];
+  knowledge?: KnowledgeTurnMeta;
   contextUsed: {
     gameId: string | null;
     gameTitle: string | null;

@@ -137,6 +137,7 @@ describe('GameHub AI — Proteção e Isolamento do Banco de Testes (Tarefa 3.1)
     try {
       const userInProd = await prodClient.user.findUnique({
         where: { email: isolationUser.email },
+        select: { id: true, email: true },
       });
 
       // CRÍTICO: O usuário NÃO deve existir na branch de produção!

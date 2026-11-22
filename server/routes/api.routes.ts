@@ -8,6 +8,7 @@ import { companionRouter } from '../modules/companion/companion.routes';
 import { authRouter } from '../modules/auth/auth.routes';
 import { userRouter } from '../modules/users/user.routes';
 import { swaggerRouter } from '../docs/swagger.routes';
+import { knowledgeRouter } from '../modules/knowledge/knowledge.routes';
 
 export const apiRouter = Router();
 
@@ -27,6 +28,9 @@ apiRouter.use('/library', libraryRouter);
 apiRouter.use('/journeys', journeysRouter);
 apiRouter.use('/progress', progressRouter);
 apiRouter.use('/builds', buildsRouter);
+
+// Gameplay Knowledge Base (RAG) Module
+apiRouter.use('/knowledge', knowledgeRouter);
 
 // GameAgent & Gemini AI Companion Module
 apiRouter.use('/agent', agentRouter);

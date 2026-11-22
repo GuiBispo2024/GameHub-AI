@@ -2,11 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
 import { prisma } from '../db/prisma';
+import { hasUserRoleColumn } from '../db/user-compat';
+
+export type AuthUserRole = 'USER' | 'ADMIN';
 
 export interface AuthUserPayload {
   id: string;
   email: string;
   username: string;
+  role: AuthUserRole;
 }
 
 // Augment Express Request interface
@@ -22,6 +26,7 @@ interface JwtTokenPayload {
   userId: string;
   email: string;
   username: string;
+  role?: AuthUserRole;
   iat: number;
   exp: number;
 }
@@ -57,10 +62,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // 3. Confirm user exists in PostgreSQL
+    // 3. Confirm user exists in PostgreSQL (and read authoritative role when column exists)
+    const includeRole = await hasUserRoleColumn();
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, email: true, username: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        ...(includeRole ? { role: true } : {}),
+      },
     });
 
     if (!user) {
@@ -76,6 +87,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       id: user.id,
       email: user.email,
       username: user.username,
+      role: includeRole && (user as any).role === 'ADMIN' ? 'ADMIN' : 'USER',
     };
 
     next();
@@ -103,4 +115,26 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       message: 'Erro interno ao validar autenticação.',
     });
   }
+}
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({
+      status: 'error',
+      code: 'UNAUTHORIZED',
+      message: 'Acesso não autorizado. Autenticação obrigatória.',
+    });
+    return;
+  }
+
+  if (req.user.role !== 'ADMIN') {
+    res.status(403).json({
+      status: 'error',
+      code: 'ADMIN_REQUIRED',
+      message: 'Acesso restrito. Apenas administradores autorizados podem gerenciar a base global de conhecimento.',
+    });
+    return;
+  }
+
+  next();
 }
