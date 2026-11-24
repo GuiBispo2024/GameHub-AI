@@ -31,8 +31,11 @@ import {
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { Modal } from '../components/ui/Modal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { Select } from '../components/ui/Select';
 import { Skeleton } from '../components/ui/Skeleton';
+import { PageHeader } from '../components/ui/PageHeader';
+import { useToast } from '../components/ui/Toast';
 import { ApiService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -47,8 +50,18 @@ import {
   LibraryEntry,
   SpoilerLevel,
 } from '../types';
+import { getSafeHttpUrl } from '../utils/url';
+import { getSpoilerLabel } from '../utils/formatters';
 
 const MAX_MESSAGE_CHARS = 2000;
+
+interface CompanionViewProps {
+  seedContext?: {
+    gameId?: string | null;
+    journeyId?: string | null;
+    nonce: number;
+  } | null;
+}
 
 function generateRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -79,7 +92,7 @@ function getToolDisplayName(toolName: string): string {
     case 'searchGames':
       return 'Catálogo IGDB';
     case 'searchGameKnowledge':
-      return 'Base de Conhecimento (RAG)';
+      return 'Base de Conhecimento';
     case 'getUserLibrary':
       return 'Biblioteca Pessoal';
     case 'getUserPreferences':
@@ -97,16 +110,6 @@ function getToolDisplayName(toolName: string): string {
   }
 }
 
-function isSafeHttpUrl(rawUrl?: string | null): boolean {
-  if (!rawUrl) return false;
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 function getActionStatusMeta(status: AgentActionStatus): {
   label: string;
   classes: string;
@@ -115,33 +118,33 @@ function getActionStatusMeta(status: AgentActionStatus): {
     case 'PENDING':
       return {
         label: 'Aguardando confirmação',
-        classes: 'bg-amber-950/70 text-amber-300 border-amber-500/40',
+        classes: 'bg-amber-950/75 text-amber-200 border-amber-500/40',
       };
     case 'CONFIRMED':
       return {
         label: 'Processando',
-        classes: 'bg-sky-950/70 text-sky-300 border-sky-500/40',
+        classes: 'bg-sky-950/75 text-sky-200 border-sky-500/40',
       };
     case 'EXECUTED':
       return {
         label: 'Executada',
-        classes: 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40',
+        classes: 'bg-emerald-950/75 text-emerald-200 border-emerald-500/40',
       };
     case 'CANCELLED':
       return {
         label: 'Cancelada',
-        classes: 'bg-slate-900 text-slate-400 border-slate-700',
+        classes: 'bg-slate-900 text-slate-300 border-slate-700',
       };
     case 'EXPIRED':
       return {
         label: 'Expirada',
-        classes: 'bg-rose-950/70 text-rose-300 border-rose-500/40',
+        classes: 'bg-rose-950/75 text-rose-200 border-rose-500/40',
       };
     case 'FAILED':
     default:
       return {
         label: 'Falhou',
-        classes: 'bg-rose-950/70 text-rose-300 border-rose-500/40',
+        classes: 'bg-rose-950/75 text-rose-200 border-rose-500/40',
       };
   }
 }
@@ -152,10 +155,10 @@ function formatExpirationTime(iso: string): string {
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function CompanionView() {
+export function CompanionView({ seedContext }: CompanionViewProps) {
   const { user } = useAuth();
+  const { showToast } = useToast();
 
-  // Mode, Context & Spoiler Configuration
   const [mode, setMode] = useState<AgentMode>('COMPANION');
   const [selectedGameId, setSelectedGameId] = useState<string>('');
   const [selectedJourneyId, setSelectedJourneyId] = useState<string>('');
@@ -163,20 +166,17 @@ export function CompanionView() {
     normalizeDefaultSpoiler(user?.preferences?.defaultSpoilerLevel)
   );
 
-  // Library & Journeys Options
   const [libraryEntries, setLibraryEntries] = useState<LibraryEntry[]>([]);
   const [journeys, setJourneys] = useState<GameplayJourney[]>([]);
   const [isLoadingOptions, setIsLoadingOptions] = useState<boolean>(true);
   const [isLoadingJourneys, setIsLoadingJourneys] = useState<boolean>(false);
 
-  // Conversations & Messages State
   const [conversations, setConversations] = useState<AgentConversationSummary[]>([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [isLoadingThread, setIsLoadingThread] = useState<boolean>(false);
 
-  // Chat Input & Request Lifecycle
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isSending, setIsSending] = useState<boolean>(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -185,12 +185,10 @@ export function CompanionView() {
     clientRequestId: string;
   } | null>(null);
 
-  // Mobile History Drawer & Delete Confirmation Modal
   const [isMobileHistoryOpen, setIsMobileHistoryOpen] = useState<boolean>(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentConversationSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
-  // Function Calling Write Action Proposals State
   const [actionProposals, setActionProposals] = useState<AgentActionProposal[]>([]);
   const [confirmingActionId, setConfirmingActionId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{
@@ -227,12 +225,39 @@ export function CompanionView() {
     },
   ];
 
-  // Auto-scroll to latest message or action proposal
+  // Apply external seed context when navigating from Explore, Library, or Journeys
+  useEffect(() => {
+    if (!seedContext) return;
+    setActiveConversationId(null);
+    setMessages([]);
+    setActionProposals([]);
+    setChatError(null);
+    setActionFeedback(null);
+    setPendingRetryPayload(null);
+    setMode('COMPANION');
+    if (seedContext.gameId) {
+      setSelectedGameId(seedContext.gameId);
+    }
+    if (seedContext.journeyId) {
+      setSelectedJourneyId(seedContext.journeyId);
+    }
+  }, [seedContext?.nonce, seedContext?.gameId, seedContext?.journeyId]);
+
+  useEffect(() => {
+    if (!isMobileHistoryOpen) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMobileHistoryOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [isMobileHistoryOpen]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, actionProposals, isSending]);
 
-  // Load initial library games & conversation history
   const loadInitialData = useCallback(async () => {
     setIsLoadingOptions(true);
     setIsLoadingConversations(true);
@@ -255,7 +280,6 @@ export function CompanionView() {
     loadInitialData();
   }, [loadInitialData]);
 
-  // Load journeys when selectedGameId changes
   useEffect(() => {
     const entry = libraryEntries.find((item) => item.gameId === selectedGameId);
     if (!entry) {
@@ -302,8 +326,8 @@ export function CompanionView() {
 
     try {
       const detail = await ApiService.getAgentConversation(conv.id);
-      setMessages(detail.messages);
-      setActionProposals(detail.actionProposals || []);
+      setMessages((detail.messages || []).filter((m) => Boolean(m && m.id)));
+      setActionProposals((detail.actionProposals || []).filter((p) => Boolean(p && p.id)));
       setMode(detail.mode);
       setSpoilerLevel(detail.spoilerLevel);
       setSelectedGameId(detail.gameId || '');
@@ -336,6 +360,7 @@ export function CompanionView() {
         handleNewConversation();
       }
       setDeleteTarget(null);
+      showToast({ variant: 'success', message: 'Conversa excluída.' });
     } catch (err: any) {
       setChatError(err.message || 'Não foi possível excluir a conversa.');
       setDeleteTarget(null);
@@ -428,27 +453,28 @@ export function CompanionView() {
     async (toolName: string) => {
       try {
         const libRes = await ApiService.getLibrary({ limit: 50, sort: 'recentlyUpdated' });
-        setLibraryEntries(libRes.data);
+        const validLib = (libRes.data || []).filter((e) => Boolean(e && e.id));
+        setLibraryEntries(validLib);
 
         if (toolName === 'updateGameProgress' && selectedGameId) {
-          const matchedEntry = libRes.data.find((item) => item.gameId === selectedGameId);
+          const matchedEntry = validLib.find((item) => item.gameId === selectedGameId);
           if (matchedEntry) {
             const jrnRes = await ApiService.getJourneys({
               userGameId: matchedEntry.id,
               limit: 30,
             });
-            setJourneys(jrnRes.data);
+            setJourneys((jrnRes.data || []).filter((j) => Boolean(j && j.id)));
           }
         }
       } catch {
-        // Non-blocking UI refresh after confirmed write
+        // Non-blocking refresh
       }
     },
     [selectedGameId]
   );
 
   const handleConfirmAction = async (proposal: AgentActionProposal) => {
-    if (confirmingActionId) return;
+    if (confirmingActionId || proposal.status !== 'PENDING') return;
     setConfirmingActionId(proposal.id);
     setActionFeedback(null);
 
@@ -467,6 +493,7 @@ export function CompanionView() {
         );
       }
       setActionFeedback({ type: 'success', message: res.message });
+      showToast({ variant: 'success', message: res.message });
       if (res.action?.toolName) {
         await refreshAfterConfirmedWrite(res.action.toolName);
       }
@@ -478,17 +505,16 @@ export function CompanionView() {
           )
         );
       }
-      setActionFeedback({
-        type: 'error',
-        message: err?.message || 'Não foi possível confirmar a ação.',
-      });
+      const msg = err?.message || 'Não foi possível confirmar a ação.';
+      setActionFeedback({ type: 'error', message: msg });
+      showToast({ variant: 'error', message: msg });
     } finally {
       setConfirmingActionId(null);
     }
   };
 
   const handleCancelAction = async (proposal: AgentActionProposal) => {
-    if (confirmingActionId) return;
+    if (confirmingActionId || proposal.status !== 'PENDING') return;
     setConfirmingActionId(proposal.id);
     setActionFeedback(null);
 
@@ -507,6 +533,7 @@ export function CompanionView() {
         );
       }
       setActionFeedback({ type: 'success', message: res.message });
+      showToast({ variant: 'info', message: res.message });
     } catch (err: any) {
       if (err?.code === 'ACTION_EXPIRED' || err?.status === 410) {
         setActionProposals((prev) =>
@@ -515,10 +542,8 @@ export function CompanionView() {
           )
         );
       }
-      setActionFeedback({
-        type: 'error',
-        message: err?.message || 'Não foi possível cancelar a ação.',
-      });
+      const msg = err?.message || 'Não foi possível cancelar a ação.';
+      setActionFeedback({ type: 'error', message: msg });
     } finally {
       setConfirmingActionId(null);
     }
@@ -528,6 +553,15 @@ export function CompanionView() {
     e.preventDefault();
     if (!inputMessage.trim() || isSending) return;
     executeSend(inputMessage, generateRequestId(), false);
+  };
+
+  const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (inputMessage.trim() && !isSending) {
+        executeSend(inputMessage, generateRequestId(), false);
+      }
+    }
   };
 
   const handleRetry = () => {
@@ -540,11 +574,11 @@ export function CompanionView() {
   const activeSpoilerOption = spoilerOptions.find((s) => s.id === spoilerLevel);
 
   const renderConversationsList = () => (
-    <div className="space-y-2">
+    <div className="space-y-2.5 flex-1 min-h-0 flex flex-col">
       <Button
         variant="primary"
         size="sm"
-        className="w-full justify-center"
+        className="w-full"
         leftIcon={<Plus className="w-4 h-4" />}
         onClick={handleNewConversation}
       >
@@ -552,53 +586,48 @@ export function CompanionView() {
       </Button>
 
       {isLoadingConversations ? (
-        <div className="space-y-2 pt-2">
+        <div className="space-y-2 pt-1">
           <Skeleton className="h-14 w-full rounded-xl" />
           <Skeleton className="h-14 w-full rounded-xl" />
           <Skeleton className="h-14 w-full rounded-xl" />
         </div>
       ) : conversations.length === 0 ? (
-        <div className="p-4 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl mt-2">
-          Nenhuma conversa salva ainda. Envie uma pergunta para iniciar.
+        <div className="p-4 text-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-xl mt-1">
+          Nenhuma conversa salva ainda. Envie uma pergunta para começar.
         </div>
       ) : (
-        <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1 pt-1">
+        <div className="space-y-1.5 overflow-y-auto pr-1 flex-1 max-h-[460px]">
           {conversations.map((conv) => {
             const isActive = conv.id === activeConversationId;
             return (
               <div
                 key={conv.id}
-                className={`group p-2.5 rounded-xl text-xs transition-all border flex items-start justify-between gap-2 cursor-pointer ${
+                className={`group p-2.5 rounded-xl text-xs transition-colors border flex items-start justify-between gap-2 ${
                   isActive
-                    ? 'bg-violet-950/70 text-violet-100 border-violet-500/50 shadow-md shadow-violet-950/40'
-                    : 'bg-slate-950/50 text-slate-400 border-slate-800/70 hover:bg-slate-900/70 hover:text-slate-200'
+                    ? 'bg-violet-950/60 text-white border-violet-500/50'
+                    : 'bg-[var(--bg-inset)] text-slate-300 border-slate-800/80 hover:border-slate-700'
                 }`}
-                onClick={() => handleSelectConversation(conv)}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold truncate text-slate-200">{conv.title}</div>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                        conv.mode === 'LIBRARY'
-                          ? 'bg-sky-950/80 text-sky-300 border border-sky-700/40'
-                          : 'bg-violet-950/80 text-violet-300 border border-violet-700/40'
-                      }`}
-                    >
+                <button
+                  type="button"
+                  onClick={() => handleSelectConversation(conv)}
+                  className="min-w-0 flex-1 text-left cursor-pointer"
+                >
+                  <div className="font-semibold truncate text-slate-100">{conv.title}</div>
+                  <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-400 tabular-nums">
+                    <span className={conv.mode === 'LIBRARY' ? 'text-sky-300' : 'text-violet-300'}>
                       {conv.mode === 'LIBRARY' ? 'Biblioteca' : 'Companion'}
                     </span>
-                    <span className="text-[10px] text-slate-500">
+                    <span>·</span>
+                    <span>
                       {conv.messageCount} msg{conv.messageCount === 1 ? '' : 's'}
                     </span>
                   </div>
-                </div>
+                </button>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(conv);
-                  }}
-                  className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/50 transition-colors shrink-0 cursor-pointer"
+                  onClick={() => setDeleteTarget(conv)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-950/40 transition-colors shrink-0 cursor-pointer"
                   aria-label={`Excluir conversa ${conv.title}`}
                   title="Excluir conversa"
                 >
@@ -613,144 +642,129 @@ export function CompanionView() {
   );
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto min-w-0">
-      {/* Header & Mode Switcher */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="min-w-0">
+    <div className="space-y-5 max-w-7xl mx-auto min-w-0 pb-6">
+      <PageHeader
+        title="Game Companion"
+        subtitle="Assistente contextual conectado às suas jornadas, guias verificados e controle rigoroso de spoilers."
+        badge={<Badge variant="ai" size="sm">Gemini + RAG</Badge>}
+        actions={
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-              GameAgent AI
-            </h1>
-            <Badge variant="ai">Gemini Engine</Badge>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Assistente contextual com histórico persistente, integração com suas jornadas e filtro anti-spoiler.
-          </p>
-        </div>
-
-        {/* Mode Toggle + Mobile History Button */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="inline-flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
-            <button
-              type="button"
-              onClick={() => setMode('COMPANION')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                mode === 'COMPANION'
-                  ? 'bg-violet-600 text-white shadow-md shadow-violet-950/60'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
+            <div
+              role="group"
+              aria-label="Modo do assistente"
+              className="inline-flex rounded-xl bg-[var(--bg-surface)] p-1 border border-slate-800"
             >
-              <Compass className="w-3.5 h-3.5" />
-              <span>Companion</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('LIBRARY')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                mode === 'LIBRARY'
-                  ? 'bg-sky-600 text-white shadow-md shadow-sky-950/60'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Biblioteca</span>
-            </button>
-          </div>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            className="lg:hidden"
-            leftIcon={<PanelLeftOpen className="w-4 h-4" />}
-            onClick={() => setIsMobileHistoryOpen(true)}
-          >
-            Conversas ({conversations.length})
-          </Button>
-        </div>
-      </div>
-
-      {/* Configuration Bar: Game, Journey & Spoiler Policy */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Game & Journey Selector */}
-        <Card className="p-4 lg:col-span-5 space-y-3">
-          <div>
-            <label className="text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1.5">
-              <Gamepad2 className="w-4 h-4 text-violet-400" />
-              <span>Jogo em Foco ({mode === 'LIBRARY' ? 'Opcional' : 'Recomendado'}):</span>
-            </label>
-            {isLoadingOptions ? (
-              <Skeleton className="h-10 w-full rounded-xl" />
-            ) : (
-              <select
-                value={selectedGameId}
-                onChange={(e) => {
-                  setSelectedGameId(e.target.value);
-                  setSelectedJourneyId('');
-                }}
-                className="w-full bg-slate-950 text-xs sm:text-sm text-white rounded-xl p-2.5 border border-slate-800 focus:outline-none focus:border-violet-500"
+              <button
+                type="button"
+                aria-pressed={mode === 'COMPANION'}
+                onClick={() => setMode('COMPANION')}
+                className={`px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  mode === 'COMPANION'
+                    ? 'bg-violet-600 text-white'
+                    : 'text-slate-300 hover:text-white'
+                }`}
               >
-                <option value="">
-                  {mode === 'LIBRARY'
-                    ? 'Consulta geral da minha biblioteca'
-                    : 'Nenhum jogo específico selecionado'}
-                </option>
-                {libraryEntries.map((entry) => (
-                  <option key={entry.id} value={entry.gameId}>
-                    {entry.game.title} ({entry.hoursPlayed}h)
-                  </option>
-                ))}
-              </select>
-            )}
+                <Compass className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Companion</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'LIBRARY'}
+                onClick={() => setMode('LIBRARY')}
+                className={`px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  mode === 'LIBRARY'
+                    ? 'bg-sky-600 text-white'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Biblioteca</span>
+              </button>
+            </div>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className="lg:hidden"
+              leftIcon={<PanelLeftOpen className="w-4 h-4" />}
+              onClick={() => setIsMobileHistoryOpen(true)}
+            >
+              Conversas ({conversations.length})
+            </Button>
           </div>
+        }
+      />
+
+      {/* Context & Spoiler Configuration */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <Card className="p-4 lg:col-span-5 space-y-3">
+          {isLoadingOptions ? (
+            <Skeleton className="h-16 w-full rounded-xl" />
+          ) : (
+            <Select
+              label={`Jogo em foco (${mode === 'LIBRARY' ? 'Opcional' : 'Recomendado'})`}
+              value={selectedGameId}
+              onChange={(e) => {
+                setSelectedGameId(e.target.value);
+                setSelectedJourneyId('');
+              }}
+              className="text-xs sm:text-sm"
+            >
+              <option value="">
+                {mode === 'LIBRARY'
+                  ? 'Consulta geral da minha biblioteca'
+                  : 'Nenhum jogo específico selecionado'}
+              </option>
+              {libraryEntries.map((entry) => (
+                <option key={entry.id} value={entry.gameId}>
+                  {entry.game.title} ({entry.hoursPlayed}h)
+                </option>
+              ))}
+            </Select>
+          )}
 
           {mode === 'COMPANION' && (
-            <div>
-              <label className="text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1.5">
-                <Compass className="w-4 h-4 text-sky-400" />
-                <span>Jornada de Gameplay:</span>
-              </label>
-              {isLoadingJourneys ? (
-                <Skeleton className="h-10 w-full rounded-xl" />
-              ) : (
-                <select
-                  value={selectedJourneyId}
-                  onChange={(e) => setSelectedJourneyId(e.target.value)}
-                  disabled={!selectedGameId || journeys.length === 0}
-                  className="w-full bg-slate-950 text-xs sm:text-sm text-white rounded-xl p-2.5 border border-slate-800 focus:outline-none focus:border-violet-500 disabled:opacity-50"
-                >
-                  <option value="">
-                    {!selectedGameId
-                      ? 'Selecione um jogo primeiro'
-                      : journeys.length === 0
-                        ? 'Nenhuma jornada cadastrada para este jogo'
-                        : 'Sem jornada específica'}
+            isLoadingJourneys ? (
+              <Skeleton className="h-16 w-full rounded-xl" />
+            ) : (
+              <Select
+                label="Jornada de gameplay"
+                value={selectedJourneyId}
+                onChange={(e) => setSelectedJourneyId(e.target.value)}
+                disabled={!selectedGameId || journeys.length === 0}
+                className="text-xs sm:text-sm"
+              >
+                <option value="">
+                  {!selectedGameId
+                    ? 'Selecione um jogo primeiro'
+                    : journeys.length === 0
+                      ? 'Nenhuma jornada cadastrada para este jogo'
+                      : 'Sem jornada específica'}
+                </option>
+                {journeys.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name}
+                    {j.isActive ? ' (Ativa)' : ''}
+                    {j.currentArea ? ` — ${j.currentArea}` : ''}
                   </option>
-                  {journeys.map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.name}
-                      {j.isActive ? ' (Ativa)' : ''}
-                      {j.currentArea ? ` — ${j.currentArea}` : ''}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+                ))}
+              </Select>
+            )
           )}
         </Card>
 
-        {/* Spoiler Controller Selector */}
-        <Card className="p-4 lg:col-span-7 flex flex-col justify-between">
-          <div className="text-xs font-semibold text-slate-400 mb-2 flex items-center justify-between gap-2 flex-wrap">
+        <Card className="p-4 lg:col-span-7 flex flex-col justify-between gap-2.5">
+          <div className="text-xs font-semibold text-slate-300 flex items-center justify-between gap-2 flex-wrap">
             <span className="flex items-center gap-1.5">
-              <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>Controle Anti-Spoiler:</span>
+              <ShieldAlert className="w-4 h-4 text-amber-400" aria-hidden="true" />
+              <span>Política Anti-Spoiler Ativa</span>
             </span>
-            <span className="text-[11px] text-violet-400 font-medium">
+            <Badge variant="warning" size="sm">
               {activeSpoilerOption?.label}
-            </span>
+            </Badge>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="group" aria-label="Nível de proteção contra spoilers">
             {spoilerOptions.map((opt) => {
               const Icon = opt.icon;
               const isSelected = spoilerLevel === opt.id;
@@ -758,22 +772,26 @@ export function CompanionView() {
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={isSelected}
                   onClick={() => setSpoilerLevel(opt.id)}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between min-w-0 ${
+                  className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer flex flex-col justify-between min-w-0 ${
                     isSelected
-                      ? 'bg-violet-950/80 border-violet-500 text-white shadow-md shadow-violet-950/50'
-                      : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                      ? 'bg-violet-950/65 border-violet-400 text-white'
+                      : 'bg-[var(--bg-inset)] border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <Icon
-                      className={`w-4 h-4 ${isSelected ? 'text-violet-400' : 'text-slate-500'}`}
+                      className={`w-4 h-4 ${isSelected ? 'text-violet-300' : 'text-slate-400'}`}
+                      aria-hidden="true"
                     />
-                    {isSelected && <Check className="w-3.5 h-3.5 text-violet-400" />}
+                    {isSelected && <Check className="w-3.5 h-3.5 text-violet-300" aria-hidden="true" />}
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs font-bold leading-tight truncate">{opt.label}</div>
-                    <div className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{opt.desc}</div>
+                    <div className="text-[11px] text-slate-400 line-clamp-2 mt-0.5 leading-snug">
+                      {opt.desc}
+                    </div>
                   </div>
                 </button>
               );
@@ -782,16 +800,16 @@ export function CompanionView() {
         </Card>
       </div>
 
-      {/* Main Chat Layout */}
+      {/* Main Chat Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Desktop Conversations Sidebar */}
-        <Card className="hidden lg:block lg:col-span-4 xl:col-span-3 p-4 space-y-3">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-400 pb-2 border-b border-slate-800">
+        <Card className="hidden lg:flex lg:flex-col lg:col-span-4 xl:col-span-3 p-4 space-y-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800">
             <span className="flex items-center gap-1.5">
-              <History className="w-4 h-4 text-slate-400" />
-              Conversas Salvas
+              <History className="w-4 h-4 text-slate-400" aria-hidden="true" />
+              <span>Conversas Salvas</span>
             </span>
-            <span className="font-mono text-[10px] bg-slate-800 px-1.5 py-0.5 rounded">
+            <span className="font-mono text-[11px] text-slate-400 tabular-nums">
               {conversations.length}
             </span>
           </div>
@@ -799,29 +817,32 @@ export function CompanionView() {
         </Card>
 
         {/* Chat Area */}
-        <Card glow="violet" className="lg:col-span-8 xl:col-span-9 flex flex-col h-[560px] min-w-0">
-          <CardHeader className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <Card
+          glow="violet"
+          className="lg:col-span-8 xl:col-span-9 flex flex-col min-h-[460px] h-[calc(100dvh-17rem)] lg:h-[calc(100dvh-14.5rem)] max-h-[780px] min-w-0"
+        >
+          <CardHeader className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-violet-900/40 shrink-0">
-                <Bot className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-blue-600 flex items-center justify-center text-white shrink-0">
+                <Bot className="w-5 h-5" aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2 flex-wrap">
-                  <span className="truncate">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-bold text-sm text-white truncate">
                     {mode === 'LIBRARY'
                       ? 'Consultor de Biblioteca'
                       : selectedGameObj
-                        ? `Companion: ${selectedGameObj.title}`
-                        : 'Game Companion AI'}
-                  </span>
+                        ? selectedGameObj.title
+                        : 'Game Companion'}
+                  </h2>
                   <Badge variant="ai" size="sm">
                     {mode === 'LIBRARY' ? 'Biblioteca' : 'Companion'}
                   </Badge>
-                </h3>
+                </div>
                 <p className="text-[11px] text-slate-400 truncate">
-                  Proteção: {activeSpoilerOption?.label}
+                  Proteção: {getSpoilerLabel(spoilerLevel)}
                   {selectedJourneyObj
-                    ? ` • Jornada: ${selectedJourneyObj.name}${
+                    ? ` · Jornada: ${selectedJourneyObj.name}${
                         selectedJourneyObj.currentArea ? ` (${selectedJourneyObj.currentArea})` : ''
                       }`
                     : ''}
@@ -836,7 +857,7 @@ export function CompanionView() {
                 leftIcon={<Plus className="w-3.5 h-3.5" />}
                 onClick={handleNewConversation}
               >
-                Nova
+                Nova conversa
               </Button>
             )}
           </CardHeader>
@@ -850,19 +871,19 @@ export function CompanionView() {
               </div>
             ) : messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4 py-8 space-y-4">
-                <div className="w-12 h-12 rounded-2xl bg-violet-950/70 border border-violet-500/30 flex items-center justify-center text-violet-400">
-                  <Sparkles className="w-6 h-6" />
+                <div className="w-12 h-12 rounded-2xl bg-violet-950/70 border border-violet-500/35 flex items-center justify-center text-violet-300">
+                  <Sparkles className="w-6 h-6" aria-hidden="true" />
                 </div>
                 <div className="max-w-md space-y-1.5">
-                  <h4 className="text-sm font-bold text-white">
+                  <h3 className="text-sm font-bold text-white">
                     {mode === 'LIBRARY'
-                      ? 'Pronto para organizar sua biblioteca e backlog'
+                      ? 'Pronto para organizar sua biblioteca'
                       : 'Companion pronto para auxiliar na sua jornada'}
-                  </h4>
+                  </h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
                     {mode === 'LIBRARY'
-                      ? 'Pergunte o que jogar a seguir, peça comparações entre estilos ou organize seus jogos por tempo disponível.'
-                      : 'Selecione um jogo e uma jornada acima para dicas de build, estratégia e progresso sem spoilers além do seu capítulo.'}
+                      ? 'Peça recomendações baseadas no seu tempo livre, compare títulos da sua coleção ou organize o backlog.'
+                      : 'Selecione um jogo e uma jornada acima para receber estratégias com referências verificadas e proteção contra spoilers.'}
                   </p>
                 </div>
                 <div className="flex flex-wrap justify-center gap-2 pt-1">
@@ -880,9 +901,9 @@ export function CompanionView() {
                       key={suggestion}
                       type="button"
                       onClick={() => setInputMessage(suggestion)}
-                      className="text-[11px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:border-violet-500/50 hover:text-white transition-colors cursor-pointer text-left"
+                      className="text-xs px-3 py-2 rounded-xl bg-[var(--bg-inset)] border border-slate-800 text-slate-200 hover:border-violet-500/50 hover:text-white transition-colors cursor-pointer text-left"
                     >
-                      <MessageSquare className="w-3 h-3 inline mr-1.5 text-violet-400" />
+                      <MessageSquare className="w-3.5 h-3.5 inline mr-1.5 text-violet-400" aria-hidden="true" />
                       {suggestion}
                     </button>
                   ))}
@@ -906,30 +927,33 @@ export function CompanionView() {
                     className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[88%] sm:max-w-xl p-3.5 rounded-2xl text-xs sm:text-[13px] leading-relaxed whitespace-pre-wrap break-words shadow-md ${
+                      className={`max-w-[92%] sm:max-w-2xl p-3.5 sm:p-4 rounded-2xl text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words ${
                         isUser
                           ? 'rounded-tr-sm bg-gradient-to-r from-violet-600 to-indigo-600 text-white'
-                          : 'rounded-tl-sm bg-slate-950/90 border border-violet-500/25 text-slate-200'
+                          : 'rounded-tl-sm bg-[var(--bg-inset)] border border-slate-800 text-slate-100'
                       }`}
                     >
                       {!isUser && (
-                        <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-                          <div className="flex items-center gap-1.5 text-violet-400 font-bold text-[11px]">
-                            <Bot className="w-3.5 h-3.5" />
+                        <div className="flex items-center justify-between gap-2 flex-wrap mb-2 pb-1.5 border-b border-slate-800/80">
+                          <div className="flex items-center gap-1.5 text-violet-300 font-bold text-xs">
+                            <Bot className="w-3.5 h-3.5" aria-hidden="true" />
                             <span>GameAgent</span>
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {knowledge?.hasSources && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-sky-950/70 text-sky-300 border border-sky-500/30">
-                                <FileCheck2 className="w-2.5 h-2.5" />
-                                Fundamentado em fontes
-                              </span>
-                            )}
-                            {grounded && !knowledge?.hasSources && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-emerald-950/70 text-emerald-300 border border-emerald-500/30">
-                                <Database className="w-2.5 h-2.5" />
-                                Baseado em dados reais
-                              </span>
+                            {knowledge?.hasSources ? (
+                              <Badge variant="info" size="sm">
+                                <FileCheck2 className="w-3 h-3" aria-hidden="true" />
+                                Baseado em fontes
+                              </Badge>
+                            ) : grounded ? (
+                              <Badge variant="success" size="sm">
+                                <Database className="w-3 h-3" aria-hidden="true" />
+                                Dados da sua conta
+                              </Badge>
+                            ) : (
+                              <Badge variant="default" size="sm">
+                                Orientação geral
+                              </Badge>
                             )}
                           </div>
                         </div>
@@ -937,90 +961,94 @@ export function CompanionView() {
 
                       <div>{msg.content}</div>
 
+                      {/* Verified RAG Knowledge References */}
                       {!isUser && knowledge && knowledge.references.length > 0 && (
-                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1.5">
-                          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-sky-300 uppercase tracking-wider">
-                            <BookOpen className="w-3 h-3 text-sky-400" />
-                            <span>Fontes Consultadas ({knowledge.chunksUsedCount} trecho{knowledge.chunksUsedCount === 1 ? '' : 's'})</span>
+                        <div className="mt-3 pt-2.5 border-t border-slate-800 space-y-2">
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-sky-300 uppercase tracking-wider">
+                            <BookOpen className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
+                            <span>
+                              Fontes Consultadas ({knowledge.chunksUsedCount} trecho
+                              {knowledge.chunksUsedCount === 1 ? '' : 's'})
+                            </span>
                           </div>
-                          <ul className="space-y-1">
-                            {knowledge.references.map((ref) => (
-                              <li
-                                key={ref.guideId}
-                                className="flex items-center justify-between gap-2 text-[11px] text-slate-300 bg-slate-900/60 border border-slate-800/80 rounded-lg px-2.5 py-1.5"
-                              >
-                                <div className="min-w-0">
-                                  <div className="font-medium text-slate-200 truncate">
-                                    {ref.title}
+                          <ul className="space-y-1.5">
+                            {knowledge.references.map((ref) => {
+                              const safeUrl = getSafeHttpUrl(ref.sourceUrl);
+                              return (
+                                <li
+                                  key={ref.guideId}
+                                  className="flex items-center justify-between gap-2 text-xs text-slate-300 bg-slate-900/75 border border-slate-800 rounded-xl px-3 py-2"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-slate-100 truncate">
+                                      {ref.title}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400 flex items-center gap-1.5 flex-wrap">
+                                      <span>{ref.sourceName}</span>
+                                      {ref.sourceLicense && <span>· {ref.sourceLicense}</span>}
+                                      {ref.regionOrChapter && <span>· {ref.regionOrChapter}</span>}
+                                      {ref.isVerified && (
+                                        <span className="text-emerald-400 font-medium">· Verificada</span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap">
-                                    <span>{ref.sourceName}</span>
-                                    {ref.regionOrChapter && <span>· {ref.regionOrChapter}</span>}
-                                    {ref.isVerified && (
-                                      <span className="text-emerald-400">· Verificada</span>
-                                    )}
-                                  </div>
-                                </div>
-                                {isSafeHttpUrl(ref.sourceUrl) && (
-                                  <a
-                                    href={ref.sourceUrl!}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-[10px] text-sky-300 hover:text-sky-200 shrink-0 underline underline-offset-2"
-                                  >
-                                    <span>Fonte</span>
-                                    <ExternalLink className="w-2.5 h-2.5" />
-                                  </a>
-                                )}
-                              </li>
-                            ))}
+                                  {safeUrl && (
+                                    <a
+                                      href={safeUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-300 hover:text-sky-200 shrink-0 underline underline-offset-2"
+                                    >
+                                      <span>Fonte</span>
+                                      <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                                    </a>
+                                  )}
+                                </li>
+                              );
+                            })}
                           </ul>
                         </div>
                       )}
 
+                      {/* Explicit Anti-Spoiler Restriction Banner (No leaked titles/chunks) */}
                       {!isUser && knowledge?.spoilerRestricted && (
-                        <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-amber-300">
-                          <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <div
+                          role="status"
+                          className="mt-2.5 p-2.5 rounded-xl bg-amber-950/40 border border-amber-500/35 flex items-start gap-2 text-xs text-amber-200"
+                        >
+                          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
                           <span>
-                            Filtro anti-spoiler ativo: {knowledge.blockedChunksCount} trecho
-                            {knowledge.blockedChunksCount === 1 ? '' : 's'} omitido
-                            {knowledge.blockedChunksCount === 1 ? '' : 's'} para proteger sua experiência.
+                            Filtro anti-spoiler ativo ({getSpoilerLabel(spoilerLevel)}):{' '}
+                            <strong className="tabular-nums">{knowledge.blockedChunksCount}</strong>{' '}
+                            trecho{knowledge.blockedChunksCount === 1 ? '' : 's'} avançado
+                            {knowledge.blockedChunksCount === 1 ? '' : 's'} foi omitido para proteger sua experiência.
                           </span>
                         </div>
                       )}
 
+                      {/* Insufficient / No Documents Notice */}
                       {!isUser &&
                         knowledge &&
                         (knowledge.evidenceStatus === 'NO_DOCUMENTS' ||
                           knowledge.evidenceStatus === 'INSUFFICIENT') && (
-                          <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-slate-400">
-                            <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                          <div className="mt-2.5 p-2.5 rounded-xl bg-slate-900/70 border border-slate-800 flex items-start gap-2 text-xs text-slate-300">
+                            <AlertCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
                             <span>
-                              Informação documental insuficiente na base de conhecimento curada para esta consulta.
+                              Não há documentos verificados suficientes na base de conhecimento para esta consulta específica; a resposta utiliza apenas orientação geral segura.
                             </span>
                           </div>
                         )}
 
+                      {/* Tools Executed */}
                       {!isUser && toolsUsed.length > 0 && (
-                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 mr-0.5">
-                            <Wrench className="w-3 h-3 text-sky-400" />
-                            Ferramentas:
+                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center gap-1.5 flex-wrap text-[11px] text-slate-400">
+                          <span className="inline-flex items-center gap-1 mr-1">
+                            <Wrench className="w-3 h-3 text-sky-400" aria-hidden="true" />
+                            Consultas:
                           </span>
-                          {toolsUsed.map((tool, idx) => (
-                            <span
-                              key={`${tool.name}-${idx}`}
-                              className={`text-[10px] px-1.5 py-0.5 rounded-md border font-medium ${
-                                tool.status === 'EXECUTED'
-                                  ? 'bg-sky-950/60 text-sky-300 border-sky-700/40'
-                                  : tool.status === 'PENDING_CONFIRMATION'
-                                    ? 'bg-amber-950/60 text-amber-300 border-amber-700/40'
-                                    : 'bg-rose-950/60 text-rose-300 border-rose-700/40'
-                              }`}
-                            >
-                              {getToolDisplayName(tool.name)}
-                            </span>
-                          ))}
+                          <span>
+                            {Array.from(new Set(toolsUsed.map((t) => getToolDisplayName(t.name)))).join(' · ')}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1029,10 +1057,11 @@ export function CompanionView() {
               })
             )}
 
+            {/* Write Action Proposals */}
             {actionProposals.length > 0 && (
-              <div className="space-y-2.5 pt-2 border-t border-slate-800/80">
-                <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-                  <Wrench className="w-3.5 h-3.5 text-amber-400" />
+              <div className="space-y-2.5 pt-3 border-t border-slate-800">
+                <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Wrench className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
                   <span>Ações Propostas pelo GameAgent</span>
                 </div>
                 {actionProposals.map((proposal) => {
@@ -1046,81 +1075,79 @@ export function CompanionView() {
                       key={proposal.id}
                       className={`p-3.5 rounded-xl border text-xs space-y-2.5 ${
                         isPending
-                          ? 'bg-amber-950/20 border-amber-500/40'
-                          : 'bg-slate-900/70 border-slate-800'
+                          ? 'bg-amber-950/20 border-amber-500/45'
+                          : 'bg-[var(--bg-inset)] border-slate-800'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2 flex-wrap">
                         <div className="space-y-0.5 min-w-0">
-                          <div className="font-bold text-white flex items-center gap-1.5">
-                            <span>{getToolDisplayName(proposal.toolName)}</span>
+                          <div className="font-bold text-white">
+                            {getToolDisplayName(proposal.toolName)}
                           </div>
                           <p className="text-slate-300 leading-relaxed">{proposal.summary}</p>
                         </div>
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded-md border font-semibold shrink-0 ${statusMeta.classes}`}
+                          className={`text-[11px] px-2 py-0.5 rounded-md border font-semibold shrink-0 ${statusMeta.classes}`}
                         >
                           {statusMeta.label}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] text-slate-300 bg-slate-950/70 rounded-lg p-2.5 border border-slate-800/80">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-slate-300 bg-slate-950/70 rounded-xl p-3 border border-slate-800/80">
                         {typeof preview.gameTitle === 'string' && (
                           <div>
-                            <span className="text-slate-500">Jogo: </span>
-                            <span className="text-slate-200 font-medium">{preview.gameTitle}</span>
+                            <span className="text-slate-400">Jogo: </span>
+                            <span className="text-slate-100 font-medium">{preview.gameTitle}</span>
                           </div>
                         )}
                         {typeof preview.statusLabel === 'string' && (
                           <div>
-                            <span className="text-slate-500">Status: </span>
-                            <span className="text-slate-200 font-medium">{preview.statusLabel}</span>
+                            <span className="text-slate-400">Status: </span>
+                            <span className="text-slate-100 font-medium">{preview.statusLabel}</span>
                           </div>
                         )}
                         {typeof preview.journeyName === 'string' && (
                           <div>
-                            <span className="text-slate-500">Jornada: </span>
-                            <span className="text-slate-200 font-medium">{preview.journeyName}</span>
+                            <span className="text-slate-400">Jornada: </span>
+                            <span className="text-slate-100 font-medium">{preview.journeyName}</span>
                           </div>
                         )}
                         {typeof preview.areaName === 'string' && preview.areaName && (
                           <div>
-                            <span className="text-slate-500">Área: </span>
-                            <span className="text-slate-200 font-medium">{preview.areaName}</span>
+                            <span className="text-slate-400">Área: </span>
+                            <span className="text-slate-100 font-medium">{preview.areaName}</span>
                           </div>
                         )}
                         {typeof preview.questName === 'string' && preview.questName && (
                           <div>
-                            <span className="text-slate-500">Missão: </span>
-                            <span className="text-slate-200 font-medium">{preview.questName}</span>
+                            <span className="text-slate-400">Missão: </span>
+                            <span className="text-slate-100 font-medium">{preview.questName}</span>
                           </div>
                         )}
                         {typeof preview.completionPercent === 'number' && (
-                          <div>
-                            <span className="text-slate-500">Progresso: </span>
-                            <span className="text-slate-200 font-medium">
-                              {preview.completionPercent}%
-                            </span>
+                          <div className="tabular-nums">
+                            <span className="text-slate-400">Progresso: </span>
+                            <span className="text-slate-100 font-medium">{preview.completionPercent}%</span>
                           </div>
                         )}
                         {typeof preview.description === 'string' && preview.description && (
                           <div className="sm:col-span-2">
-                            <span className="text-slate-500">Descrição: </span>
-                            <span className="text-slate-200">{preview.description}</span>
+                            <span className="text-slate-400">Descrição: </span>
+                            <span className="text-slate-100">{preview.description}</span>
                           </div>
                         )}
                       </div>
 
                       {proposal.errorMessage && proposal.status === 'FAILED' && (
-                        <div className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-2.5 py-1.5">
+                        <div className="text-xs text-rose-200 bg-rose-950/40 border border-rose-500/35 rounded-lg px-3 py-2">
                           {proposal.errorMessage}
                         </div>
                       )}
 
                       {isPending && (
                         <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
-                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
-                            <Clock className="w-3 h-3 text-amber-400" />
+                          <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 tabular-nums">
+                            <Clock className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
                             Expira às {formatExpirationTime(proposal.expiresAt)}
                           </span>
                           <div className="flex items-center gap-2">
@@ -1161,6 +1188,7 @@ export function CompanionView() {
 
             {actionFeedback && (
               <div
+                role={actionFeedback.type === 'error' ? 'alert' : 'status'}
                 className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
                   actionFeedback.type === 'success'
                     ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200'
@@ -1168,27 +1196,30 @@ export function CompanionView() {
                 }`}
               >
                 {actionFeedback.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                 )}
                 <span>{actionFeedback.message}</span>
               </div>
             )}
 
             {isSending && (
-              <div className="flex justify-start">
-                <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-slate-950/90 border border-violet-500/25 text-xs text-slate-300 flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
-                  <span>Consultando ferramentas e formulando resposta...</span>
+              <div className="flex justify-start" role="status" aria-live="polite">
+                <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-[var(--bg-inset)] border border-violet-500/30 text-xs text-slate-200 flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" aria-hidden="true" />
+                  <span>Consultando fontes e formulando resposta...</span>
                 </div>
               </div>
             )}
 
             {chatError && (
-              <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+              >
                 <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>{chatError}</span>
                 </div>
                 {pendingRetryPayload && (
@@ -1208,29 +1239,35 @@ export function CompanionView() {
             <div ref={messagesEndRef} />
           </CardContent>
 
-          {/* Chat Input Form */}
+          {/* Sticky Composer */}
           <form
             onSubmit={handleSubmit}
-            className="p-3 sm:p-4 border-t border-slate-800/80 bg-slate-950/60 space-y-1.5"
+            className="p-3 sm:p-4 border-t border-slate-800/80 bg-[var(--bg-inset)]/90 space-y-1.5 shrink-0"
           >
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
+            <div className="flex items-end gap-2">
+              <label htmlFor="companion-message-input" className="sr-only">
+                Mensagem para o Game Companion
+              </label>
+              <textarea
+                id="companion-message-input"
+                rows={1}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
+                onKeyDown={handleComposerKeyDown}
                 maxLength={MAX_MESSAGE_CHARS}
                 disabled={isSending}
                 placeholder={
                   mode === 'LIBRARY'
                     ? 'Pergunte sobre organização do backlog, recomendações ou comparações...'
-                    : 'Pergunte sobre builds, atributos, área atual ou próximos passos...'
+                    : 'Pergunte sobre builds, estratégia, área atual ou próximos passos...'
                 }
-                className="flex-1 min-w-0 bg-slate-900 text-xs sm:text-sm text-slate-100 placeholder:text-slate-500 rounded-xl px-3.5 py-2.5 border border-slate-800 focus:outline-none focus:border-violet-500 transition-all disabled:opacity-60"
+                className="flex-1 min-w-0 min-h-[44px] max-h-32 bg-slate-900 text-xs sm:text-sm text-slate-100 placeholder:text-slate-500 rounded-xl px-3.5 py-2.5 border border-slate-700/80 focus:outline-none focus:border-violet-400 transition-colors disabled:opacity-60 resize-none"
               />
               <Button
                 type="submit"
                 variant="primary"
                 size="md"
+                className="min-h-[44px]"
                 leftIcon={
                   isSending ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1243,9 +1280,11 @@ export function CompanionView() {
                 <span className="hidden sm:inline">{isSending ? 'Enviando...' : 'Enviar'}</span>
               </Button>
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
-              <span>As respostas seguem estritamente o filtro anti-spoiler selecionado.</span>
-              <span className="font-mono">
+            <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 gap-2">
+              <span className="truncate">
+                Enter envia · Shift+Enter quebra linha · Filtro anti-spoiler ativo
+              </span>
+              <span className="font-mono tabular-nums shrink-0">
                 {inputMessage.length}/{MAX_MESSAGE_CHARS}
               </span>
             </div>
@@ -1253,24 +1292,30 @@ export function CompanionView() {
         </Card>
       </div>
 
-      {/* Mobile Conversations Drawer Modal */}
+      {/* Mobile Conversations Drawer */}
       {isMobileHistoryOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Histórico de conversas"
+          className="fixed inset-0 z-50 lg:hidden flex"
+        >
           <div
             className="fixed inset-0 bg-black/75 backdrop-blur-sm"
             onClick={() => setIsMobileHistoryOpen(false)}
+            aria-hidden="true"
           />
-          <div className="relative w-80 max-w-[85vw] bg-slate-900 border-r border-slate-800 h-full p-4 z-10 flex flex-col gap-3">
+          <div className="relative w-80 max-w-[85vw] bg-[var(--bg-surface)] border-r border-slate-800 h-full p-4 z-10 flex flex-col gap-3">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="text-sm font-bold text-white flex items-center gap-2">
-                <History className="w-4 h-4 text-violet-400" />
+                <History className="w-4 h-4 text-violet-400" aria-hidden="true" />
                 Conversas Salvas
               </span>
               <button
                 type="button"
                 onClick={() => setIsMobileHistoryOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
-                aria-label="Fechar histórico"
+                className="min-w-[40px] min-h-[40px] inline-flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                aria-label="Fechar histórico de conversas"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1280,46 +1325,23 @@ export function CompanionView() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      <Modal
+      <ConfirmDialog
         isOpen={!!deleteTarget}
-        onClose={() => !isDeleting && setDeleteTarget(null)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
         title="Excluir Conversa"
         description="Esta ação removerá permanentemente todas as mensagens desta conversa."
-        maxWidth="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-xs text-slate-300">
-            Tem certeza que deseja excluir{' '}
-            <strong className="text-white">{deleteTarget?.title}</strong>?
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteTarget(null)}
-              disabled={isDeleting}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={handleConfirmDelete}
-              disabled={isDeleting}
-              leftIcon={
-                isDeleting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
-                )
-              }
-            >
-              {isDeleting ? 'Excluindo...' : 'Excluir'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        message={
+          deleteTarget ? (
+            <>
+              Tem certeza que deseja excluir{' '}
+              <strong className="text-white">{deleteTarget.title}</strong>?
+            </>
+          ) : null
+        }
+        confirmLabel="Excluir"
+        isLoading={isDeleting}
+      />
     </div>
   );
 }

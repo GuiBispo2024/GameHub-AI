@@ -21,45 +21,49 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       rightIcon,
       children,
       disabled,
+      type = 'button',
       ...props
     },
     ref
   ) => {
     const baseStyles =
-      'inline-flex items-center justify-center font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:opacity-50 disabled:cursor-not-allowed select-none rounded-xl cursor-pointer';
+      'inline-flex items-center justify-center font-semibold whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080a12] disabled:opacity-50 disabled:cursor-not-allowed select-none rounded-xl cursor-pointer';
 
     const variants = {
       primary:
-        'bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 text-white shadow-lg shadow-violet-900/30 hover:from-violet-500 hover:via-indigo-500 hover:to-blue-500 active:scale-[0.98]',
+        'bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 text-white shadow-md shadow-violet-950/40 hover:from-violet-500 hover:via-indigo-500 hover:to-blue-500 active:scale-[0.99]',
       secondary:
-        'bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 border border-slate-700/60 active:scale-[0.98]',
+        'bg-slate-800/90 hover:bg-slate-700/90 text-slate-100 border border-slate-700/70 active:scale-[0.99]',
       outline:
-        'bg-transparent border border-violet-500/40 text-violet-300 hover:bg-violet-950/40 hover:border-violet-400 active:scale-[0.98]',
+        'bg-slate-950/40 border border-slate-700/80 text-slate-200 hover:bg-slate-800/70 hover:border-violet-500/60 hover:text-white active:scale-[0.99]',
       ghost:
-        'bg-transparent text-slate-300 hover:bg-slate-800/60 hover:text-white',
+        'bg-transparent text-slate-300 hover:bg-slate-800/70 hover:text-white',
       danger:
-        'bg-red-600/90 hover:bg-red-500 text-white shadow-lg shadow-red-950/40 active:scale-[0.98]',
+        'bg-rose-600/90 hover:bg-rose-500 text-white shadow-md shadow-rose-950/40 active:scale-[0.99]',
     };
 
     const sizes = {
-      sm: 'text-xs px-3 py-1.5 gap-1.5',
-      md: 'text-sm px-4 py-2 gap-2',
-      lg: 'text-base px-5 py-2.5 gap-2.5',
+      sm: 'text-xs px-3 py-2 min-h-[36px] gap-1.5',
+      md: 'text-sm px-4 py-2.5 min-h-[40px] gap-2',
+      lg: 'text-sm sm:text-base px-5 py-3 min-h-[44px] gap-2',
     };
 
     return (
       <button
         ref={ref}
+        type={type}
         disabled={disabled || isLoading}
+        aria-busy={isLoading || undefined}
         className={twMerge(clsx(baseStyles, variants[variant], sizes[size], className))}
         {...props}
       >
         {isLoading && (
           <svg
-            className="animate-spin -ml-1 mr-2 h-4 w-4 text-current"
+            className="animate-spin h-4 w-4 text-current shrink-0"
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
+            aria-hidden="true"
           >
             <circle
               className="opacity-25"
@@ -76,9 +80,17 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             />
           </svg>
         )}
-        {!isLoading && leftIcon && <span className="shrink-0">{leftIcon}</span>}
-        <span>{children}</span>
-        {!isLoading && rightIcon && <span className="shrink-0">{rightIcon}</span>}
+        {!isLoading && leftIcon && (
+          <span className="shrink-0 inline-flex items-center" aria-hidden="true">
+            {leftIcon}
+          </span>
+        )}
+        {children !== undefined && children !== null && <span>{children}</span>}
+        {!isLoading && rightIcon && (
+          <span className="shrink-0 inline-flex items-center" aria-hidden="true">
+            {rightIcon}
+          </span>
+        )}
       </button>
     );
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search,
   Gamepad2,
@@ -6,28 +6,37 @@ import {
   Plus,
   Bot,
   Sparkles,
-  RefreshCw,
   AlertCircle,
-  CheckCircle2,
   X,
   Filter,
   Check,
   Library,
   Lock,
   ArrowRight,
+  ArrowUpDown,
 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton } from '../components/ui/Skeleton';
+import { Select } from '../components/ui/Select';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState } from '../components/ui/ErrorState';
+import { PageHeader } from '../components/ui/PageHeader';
+import { GameCover } from '../components/ui/GameCover';
+import { useToast } from '../components/ui/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
 import { GameItem, LibraryEntry, LibraryStatus, NavTab } from '../types';
+import { LIBRARY_STATUS_META, formatFullDateBR, formatReleaseYear } from '../utils/formatters';
 
 interface ExploreViewProps {
   onNavigate: (tab: NavTab) => void;
+  onOpenCompanion?: (context?: { gameId?: string | null; journeyId?: string | null }) => void;
 }
+
+type ExploreSortOption = 'relevance' | 'ratingDesc' | 'releaseDesc' | 'titleAsc';
 
 const LIBRARY_STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string; description: string }> = [
   { value: 'BACKLOG', label: 'Pretendo jogar', description: 'Salvar na fila para jogar em breve' },
@@ -38,22 +47,15 @@ const LIBRARY_STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string; descr
   { value: 'DROPPED', label: 'Abandonado', description: 'Não pretende continuar' },
 ];
 
-const STATUS_LABEL_MAP: Record<LibraryStatus, string> = {
-  WISHLIST: 'Desejado',
-  BACKLOG: 'Pretendo jogar',
-  PLAYING: 'Jogando',
-  COMPLETED: 'Concluído',
-  PAUSED: 'Pausado',
-  DROPPED: 'Abandonado',
-};
-
-export function ExploreView({ onNavigate }: ExploreViewProps) {
+export function ExploreView({ onNavigate, onOpenCompanion }: ExploreViewProps) {
   const { isAuthenticated } = useAuth();
+  const { showToast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('Elden Ring');
   const [debouncedSearch, setDebouncedSearch] = useState('Elden Ring');
   const [selectedGenre, setSelectedGenre] = useState<string>('Todos');
   const [selectedPlatform, setSelectedPlatform] = useState<string>('Todas');
+  const [sortBy, setSortBy] = useState<ExploreSortOption>('relevance');
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
 
@@ -63,17 +65,12 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
 
   const [selectedGame, setSelectedGame] = useState<GameItem | null>(null);
 
-  // User Library state mapped by gameId -> LibraryEntry
   const [libraryMap, setLibraryMap] = useState<Record<string, LibraryEntry>>({});
   const [addingGame, setAddingGame] = useState<GameItem | null>(null);
   const [chosenStatus, setChosenStatus] = useState<LibraryStatus>('BACKLOG');
   const [isAdding, setIsAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [loginPromptGame, setLoginPromptGame] = useState<GameItem | null>(null);
-  const [feedbackBanner, setFeedbackBanner] = useState<{
-    type: 'success' | 'error';
-    message: string;
-  } | null>(null);
 
   const [genresList, setGenresList] = useState<string[]>([
     'Todos',
@@ -94,7 +91,6 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
     'PlayStation 4',
   ]);
 
-  // Debounce search term by 400ms
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(searchTerm.trim());
@@ -104,14 +100,6 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  // Auto-dismiss feedback banner
-  useEffect(() => {
-    if (!feedbackBanner) return;
-    const t = setTimeout(() => setFeedbackBanner(null), 5000);
-    return () => clearTimeout(t);
-  }, [feedbackBanner]);
-
-  // Load authenticated user's library index to mark already-added games
   const loadUserLibraryIndex = useCallback(async () => {
     if (!isAuthenticated) {
       setLibraryMap({});
@@ -126,7 +114,7 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
       }
       setLibraryMap(map);
     } catch {
-      // Ignore silent preload failures; POST /api/library enforces server-side 409 anyway
+      // Non-blocking preload
     }
   }, [isAuthenticated]);
 
@@ -134,7 +122,6 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
     loadUserLibraryIndex();
   }, [loadUserLibraryIndex]);
 
-  // Load available genres & platforms on mount
   useEffect(() => {
     async function loadFilters() {
       try {
@@ -159,14 +146,13 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
           }
         }
       } catch {
-        // Use defaults if filters endpoint fails
+        // Fallback to default filters
       }
     }
 
     loadFilters();
   }, []);
 
-  // Fetch games when search, genre, platform or page changes
   const fetchGames = useCallback(async () => {
     const queryToSearch = debouncedSearch || 'Elden Ring';
     setLoading(true);
@@ -207,6 +193,23 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
     fetchGames();
   }, [fetchGames]);
 
+  const sortedGames = useMemo(() => {
+    if (sortBy === 'relevance') return games;
+    const copy = [...games];
+    if (sortBy === 'ratingDesc') {
+      copy.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
+    } else if (sortBy === 'releaseDesc') {
+      copy.sort((a, b) => {
+        const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
+        const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0;
+        return db - da;
+      });
+    } else if (sortBy === 'titleAsc') {
+      copy.sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+    }
+    return copy;
+  }, [games, sortBy]);
+
   const handleRequestAddToLibrary = (game: GameItem) => {
     if (!isAuthenticated) {
       setLoginPromptGame(game);
@@ -214,8 +217,8 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
     }
 
     if (!game.id) {
-      setFeedbackBanner({
-        type: 'error',
+      showToast({
+        variant: 'error',
         message: 'Este jogo ainda não possui identificador persistido no catálogo local.',
       });
       return;
@@ -248,11 +251,12 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         ...prev,
         [entry.gameId]: entry,
       }));
-      setAddingGame(null);
-      setFeedbackBanner({
-        type: 'success',
-        message: `"${addingGame.title}" adicionado à sua biblioteca como "${STATUS_LABEL_MAP[chosenStatus]}".`,
+      const statusLabel = LIBRARY_STATUS_META[chosenStatus].label;
+      showToast({
+        variant: 'success',
+        message: `"${addingGame.title}" adicionado à biblioteca como "${statusLabel}".`,
       });
+      setAddingGame(null);
     } catch (err: any) {
       if (err.status === 401) {
         setAddingGame(null);
@@ -268,49 +272,19 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         setAddError('Jogo não encontrado no banco de dados. Tente recarregar a pesquisa.');
         return;
       }
-      setAddError(err.message || 'Erro inesperado ao salvar na biblioteca (500).');
+      setAddError(err.message || 'Erro inesperado ao salvar na biblioteca.');
     } finally {
       setIsAdding(false);
     }
   };
 
-  const formatReleaseYear = (dateStr?: string | null) => {
-    if (!dateStr) return 'TBA';
-    try {
-      const year = new Date(dateStr).getFullYear();
-      return isNaN(year) ? 'TBA' : year.toString();
-    } catch {
-      return 'TBA';
-    }
-  };
-
-  const formatFullDate = (dateStr?: string | null) => {
-    if (!dateStr) return 'Não informada';
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-    } catch {
-      return dateStr;
-    }
-  };
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Header and status banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Explorar Catálogo de Jogos</h1>
-            <Badge variant="ai" size="sm">IGDB Real API</Badge>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Pesquisa em tempo real na base de dados global da IGDB com persistência no Neon PostgreSQL.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {isAuthenticated && (
+      <PageHeader
+        title="Explorar Catálogo"
+        subtitle="Pesquise jogos na base global da IGDB, confira detalhes e adicione à sua coleção."
+        actions={
+          isAuthenticated ? (
             <Button
               variant="secondary"
               size="sm"
@@ -319,304 +293,246 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
             >
               Minha Biblioteca ({Object.keys(libraryMap).length})
             </Button>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
-      {/* Feedback Banner */}
-      {feedbackBanner && (
-        <div
-          className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
-            feedbackBanner.type === 'success'
-              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-              : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            {feedbackBanner.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            )}
-            <span>{feedbackBanner.message}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {feedbackBanner.type === 'success' && (
-              <button
-                type="button"
-                onClick={() => onNavigate('library')}
-                className="text-emerald-300 underline hover:text-white font-semibold"
-              >
-                Abrir Biblioteca
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setFeedbackBanner(null)}
-              className="opacity-70 hover:opacity-100"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4 backdrop-blur-md">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-all">
-            <Search className="w-4 h-4 text-slate-400 shrink-0" />
+      {/* Search, Platform & Sort Toolbar */}
+      <Card className="p-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+          <div className="md:col-span-6 flex items-center gap-2 px-3.5 min-h-[42px] rounded-xl bg-[var(--bg-inset)] border border-slate-700/80 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-500/20">
+            <Search className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />
             <input
-              type="text"
+              type="search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Pesquisar por título (ex: Elden Ring, God of War, Cyberpunk, Zelda)..."
+              aria-label="Pesquisar jogos por título"
+              placeholder="Pesquisar por título (ex: Elden Ring, Baldur's Gate, Hades)..."
               className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
             />
             {searchTerm && (
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="text-slate-400 hover:text-white p-0.5"
-                title="Limpar busca"
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+                aria-label="Limpar busca"
               >
                 <X className="w-4 h-4" />
               </button>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <select
+          <div className="md:col-span-3">
+            <Select
+              aria-label="Filtrar por plataforma"
               value={selectedPlatform}
               onChange={(e) => {
                 setSelectedPlatform(e.target.value);
                 setPage(1);
               }}
-              className="w-full sm:w-auto bg-slate-950 text-slate-300 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-violet-500"
+              className="text-xs"
             >
               {platformsList.map((plat) => (
                 <option key={plat} value={plat}>
-                  {plat === 'Todas' ? 'Todas Plataformas' : plat}
+                  {plat === 'Todas' ? 'Todas as plataformas' : plat}
                 </option>
               ))}
-            </select>
+            </Select>
+          </div>
+
+          <div className="md:col-span-3 flex items-center gap-2">
+            <ArrowUpDown className="w-4 h-4 text-slate-400 shrink-0 hidden sm:block" aria-hidden="true" />
+            <Select
+              aria-label="Ordenar resultados"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as ExploreSortOption)}
+              className="text-xs"
+            >
+              <option value="relevance">Relevância</option>
+              <option value="ratingDesc">Maior nota IGDB</option>
+              <option value="releaseDesc">Mais recentes</option>
+              <option value="titleAsc">Título (A–Z)</option>
+            </Select>
           </div>
         </div>
 
-        {/* Genre Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 mr-1 shrink-0">
-            <Filter className="w-3 h-3 text-violet-400" />
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none" role="group" aria-label="Filtrar por gênero">
+          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mr-1 shrink-0">
+            <Filter className="w-3.5 h-3.5 text-violet-400" aria-hidden="true" />
             Gênero:
           </span>
-          {genresList.map((genre) => (
-            <button
-              key={genre}
-              type="button"
-              onClick={() => {
-                setSelectedGenre(genre);
-                setPage(1);
-              }}
-              className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap border transition-all ${
-                selectedGenre === genre
-                  ? 'bg-violet-600 text-white border-violet-500 shadow-sm shadow-violet-500/30'
-                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
-              }`}
-            >
-              {genre}
-            </button>
-          ))}
+          {genresList.map((genre) => {
+            const active = selectedGenre === genre;
+            return (
+              <button
+                key={genre}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setSelectedGenre(genre);
+                  setPage(1);
+                }}
+                className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-semibold whitespace-nowrap border transition-colors cursor-pointer shrink-0 ${
+                  active
+                    ? 'bg-violet-600 text-white border-violet-500'
+                    : 'bg-[var(--bg-inset)] text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
+                }`}
+              >
+                {genre}
+              </button>
+            );
+          })}
         </div>
-      </div>
+      </Card>
 
-      {/* Error state with retry */}
       {error && (
-        <div className="p-6 rounded-2xl bg-rose-950/30 border border-rose-500/40 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
-            <div>
-              <h3 className="text-sm font-bold text-rose-200">Não foi possível carregar os jogos</h3>
-              <p className="text-xs text-rose-300/80 mt-0.5">{error}</p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchGames}
-            leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
-          >
-            Tentar novamente
-          </Button>
-        </div>
+        <ErrorState
+          title="Não foi possível carregar os jogos"
+          message={error}
+          onRetry={fetchGames}
+        />
       )}
 
-      {/* Loading Skeletons */}
       {loading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {Array.from({ length: 8 }).map((_, idx) => (
-            <div key={idx} className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex flex-col h-[380px] p-4 space-y-3">
+            <div key={idx} className="rounded-2xl bg-[var(--bg-surface)] border border-slate-800 overflow-hidden flex flex-col h-[380px] p-4 space-y-3">
               <Skeleton className="w-full h-44 rounded-xl" />
               <Skeleton className="w-3/4 h-5" />
               <Skeleton className="w-full h-10" />
-              <div className="flex gap-2 pt-2">
-                <Skeleton className="w-16 h-4" />
-                <Skeleton className="w-16 h-4" />
-              </div>
-              <Skeleton className="w-full h-8 mt-auto rounded-xl" />
+              <Skeleton className="w-full h-9 mt-auto rounded-xl" />
             </div>
           ))}
         </div>
       )}
 
-      {/* Empty State */}
-      {!loading && !error && games.length === 0 && (
-        <div className="py-16 text-center rounded-2xl bg-slate-900/40 border border-slate-800 p-8 space-y-4">
-          <div className="w-16 h-16 rounded-full bg-slate-800/80 flex items-center justify-center mx-auto text-slate-400">
-            <Gamepad2 className="w-8 h-8" />
-          </div>
-          <div className="max-w-md mx-auto space-y-1">
-            <h3 className="text-base font-bold text-white">Nenhum jogo encontrado</h3>
-            <p className="text-xs text-slate-400">
-              Não encontramos nenhum título correspondente à busca &ldquo;{debouncedSearch}&rdquo;
-              {selectedGenre !== 'Todos' && ` no gênero ${selectedGenre}`}. Tente ajustar os termos ou filtros.
-            </p>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setSearchTerm('Final Fantasy');
-              setSelectedGenre('Todos');
-              setSelectedPlatform('Todas');
-            }}
-          >
-            Ver títulos populares
-          </Button>
-        </div>
+      {!loading && !error && sortedGames.length === 0 && (
+        <EmptyState
+          icon={<Gamepad2 className="w-7 h-7" />}
+          title="Nenhum jogo encontrado"
+          description={`Não encontramos nenhum título para "${debouncedSearch}"${
+            selectedGenre !== 'Todos' ? ` no gênero ${selectedGenre}` : ''
+          }. Tente ajustar os filtros.`}
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setSearchTerm('Final Fantasy');
+                setSelectedGenre('Todos');
+                setSelectedPlatform('Todas');
+              }}
+            >
+              Ver títulos populares
+            </Button>
+          }
+        />
       )}
 
-      {/* Games Cards Grid */}
-      {!loading && !error && games.length > 0 && (
+      {!loading && !error && sortedGames.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {games.map((game) => {
+          {sortedGames.map((game) => {
             const libraryEntry = game.id ? libraryMap[game.id] : undefined;
 
             return (
               <Card
                 key={game.igdbId}
                 glow="violet"
-                className="group cursor-pointer flex flex-col h-full hover:-translate-y-1 transition-all bg-slate-900/80 border-slate-800"
-                onClick={() => setSelectedGame(game)}
+                className="group flex flex-col h-full"
               >
-                {/* Cover Image */}
-                <div className="relative aspect-[3/4] overflow-hidden bg-slate-950">
-                  {game.coverUrl ? (
-                    <img
-                      src={game.coverUrl}
-                      alt={game.title}
-                      referrerPolicy="no-referrer"
-                      loading="lazy"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-slate-900 text-slate-600 space-y-2">
-                      <Gamepad2 className="w-12 h-12" />
-                      <span className="text-xs text-center font-medium">Sem imagem de capa oficial</span>
-                    </div>
-                  )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedGame(game)}
+                  className="relative aspect-[3/4] w-full overflow-hidden bg-slate-950 text-left cursor-pointer focus-visible:outline-none"
+                  aria-label={`Ver detalhes de ${game.title}`}
+                >
+                  <GameCover
+                    src={game.coverUrl}
+                    alt={game.title}
+                    className="w-full h-full"
+                    imgClassName="group-hover:scale-105 transition-transform duration-300"
+                    fallbackLabel="Sem capa oficial"
+                    iconSize="lg"
+                  />
 
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-90" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-90 pointer-events-none" />
 
-                  {/* Library indicator on top-left */}
                   {libraryEntry && (
                     <div className="absolute top-3 left-3">
                       <Badge variant="success" size="sm">
-                        <Check className="w-3 h-3" />
-                        Na sua biblioteca
+                        <Check className="w-3 h-3" aria-hidden="true" />
+                        Na biblioteca
                       </Badge>
                     </div>
                   )}
 
-                  {/* Rating Badge */}
                   {game.rating !== null && (
                     <div className="absolute top-3 right-3">
-                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-950/90 text-amber-300 border border-amber-500/40 backdrop-blur-md shadow-lg shadow-black/60 tabular-nums">
-                        <Star className="w-3.5 h-3.5 fill-amber-300 text-amber-300" />
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-950/90 text-amber-300 border border-amber-500/35 tabular-nums">
+                        <Star className="w-3.5 h-3.5 fill-amber-300 text-amber-300" aria-hidden="true" />
                         {Math.round(game.rating)}
                       </span>
                     </div>
                   )}
 
-                  {/* Year and Developer */}
-                  <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] text-slate-300 font-medium">
-                    <span className="px-2 py-0.5 rounded bg-slate-950/80 border border-slate-800 tabular-nums">
+                  <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between gap-2 text-[11px] text-slate-300 font-medium">
+                    <span className="px-2 py-0.5 rounded-md bg-slate-950/85 border border-slate-800 tabular-nums">
                       {formatReleaseYear(game.releaseDate)}
                     </span>
                     {game.developer && (
-                      <span className="truncate max-w-[120px] text-slate-400 font-semibold">
+                      <span className="truncate max-w-[140px] text-slate-300 font-semibold">
                         {game.developer}
                       </span>
                     )}
                   </div>
-                </div>
+                </button>
 
-                {/* Card Body */}
                 <CardContent className="p-4 flex-1 flex flex-col justify-between space-y-3">
                   <div>
-                    <h3 className="font-bold text-sm text-white group-hover:text-violet-300 transition-colors line-clamp-1">
+                    <h2 className="font-bold text-sm text-white group-hover:text-violet-300 transition-colors line-clamp-1">
                       {game.title}
-                    </h3>
+                    </h2>
                     <p className="text-xs text-slate-400 line-clamp-2 mt-1 leading-relaxed">
                       {game.summary || 'Sinopse não cadastrada no catálogo da IGDB.'}
                     </p>
                   </div>
 
-                  <div className="space-y-3 pt-2 border-t border-slate-800/80">
-                    {/* Clean unboxed genre · platform metadata */}
+                  <div className="space-y-3 pt-2.5 border-t border-slate-800/80">
                     <div className="text-[11px] text-slate-400 truncate">
-                      {[...game.genres.slice(0, 2), ...game.platforms.slice(0, 2)].join(' · ') || 'Metadados IGDB'}
+                      {[...game.genres.slice(0, 2), ...game.platforms.slice(0, 2)].join(' · ') || 'Catálogo IGDB'}
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 pt-1">
+                    <div className="flex items-center gap-2">
                       {libraryEntry ? (
                         <Button
                           variant="outline"
                           size="sm"
-                          className="w-full text-xs border-emerald-500/40 text-emerald-300 hover:bg-emerald-950/40"
+                          className="flex-1 text-xs border-emerald-500/40 text-emerald-300 hover:bg-emerald-950/40"
                           leftIcon={<Check className="w-3.5 h-3.5" />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNavigate('library');
-                          }}
+                          onClick={() => onNavigate('library')}
                         >
-                          Na sua biblioteca ({STATUS_LABEL_MAP[libraryEntry.status]})
+                          {LIBRARY_STATUS_META[libraryEntry.status].shortLabel}
                         </Button>
                       ) : (
                         <Button
                           variant="secondary"
                           size="sm"
-                          className="w-full text-xs"
+                          className="flex-1 text-xs"
                           leftIcon={<Plus className="w-3.5 h-3.5" />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRequestAddToLibrary(game);
-                          }}
+                          onClick={() => handleRequestAddToLibrary(game)}
                         >
-                          Adicionar à Biblioteca
+                          Adicionar
                         </Button>
                       )}
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="p-2 shrink-0"
-                        title="Ver detalhes completos"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedGame(game);
-                        }}
+                        className="px-2.5 shrink-0"
+                        aria-label={`Detalhes de ${game.title}`}
+                        title="Ver detalhes"
+                        onClick={() => setSelectedGame(game)}
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                        <Sparkles className="w-4 h-4 text-violet-400" />
                       </Button>
                     </div>
                   </div>
@@ -627,8 +543,7 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         </div>
       )}
 
-      {/* Pagination Controls */}
-      {!loading && !error && games.length > 0 && (
+      {!loading && !error && sortedGames.length > 0 && (
         <div className="flex items-center justify-between pt-4 border-t border-slate-800/80">
           <Button
             variant="outline"
@@ -639,7 +554,7 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
             Página anterior
           </Button>
           <span className="text-xs text-slate-400 font-medium tabular-nums">
-            Página <span className="text-white font-bold">{page}</span>
+            Página <strong className="text-white">{page}</strong>
           </span>
           <Button
             variant="outline"
@@ -652,36 +567,38 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         </div>
       )}
 
-      {/* Modal for Game Details */}
-      {selectedGame && (
-        <Modal
-          isOpen={!!selectedGame}
-          onClose={() => setSelectedGame(null)}
-          title={selectedGame.title}
-          description={`${selectedGame.developer || 'Desenvolvedora não listada'} • Lançamento: ${formatFullDate(selectedGame.releaseDate)}`}
-        >
+      {/* Game Details Modal */}
+      <Modal
+        isOpen={!!selectedGame}
+        onClose={() => setSelectedGame(null)}
+        title={selectedGame?.title}
+        description={
+          selectedGame
+            ? `${selectedGame.developer || 'Desenvolvedora não listada'} · Lançamento: ${formatFullDateBR(selectedGame.releaseDate)}`
+            : undefined
+        }
+        maxWidth="lg"
+      >
+        {selectedGame && (
           <div className="space-y-5">
-            {/* Backdrop / Cover Banner */}
-            <div className="relative aspect-[16/9] rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner">
-              {(selectedGame.backdropUrl || selectedGame.coverUrl) && (
-                <img
-                  src={selectedGame.backdropUrl || selectedGame.coverUrl || ''}
-                  alt={selectedGame.title}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              )}
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+            <div className="relative aspect-[16/9] rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
+              <GameCover
+                src={selectedGame.backdropUrl || selectedGame.coverUrl}
+                alt={selectedGame.title}
+                className="w-full h-full"
+                fallbackLabel="Sem imagem de destaque"
+                iconSize="lg"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent pointer-events-none" />
               {selectedGame.rating !== null && (
-                <div className="absolute bottom-3 left-4 flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/90 text-amber-300 border border-amber-500/40 backdrop-blur-md tabular-nums">
-                  <Star className="w-4 h-4 fill-amber-300 text-amber-300" />
+                <div className="absolute bottom-3 left-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-950/90 text-amber-300 border border-amber-500/40 tabular-nums">
+                  <Star className="w-4 h-4 fill-amber-300 text-amber-300" aria-hidden="true" />
                   <span className="font-bold text-sm">{Math.round(selectedGame.rating)}</span>
-                  <span className="text-[10px] text-amber-400/80 uppercase">/ 100 na IGDB</span>
+                  <span className="text-[11px] text-amber-300/80">/ 100 IGDB</span>
                 </div>
               )}
             </div>
 
-            {/* Synopsis */}
             <div>
               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Sinopse</h4>
               <p className="text-sm text-slate-200 leading-relaxed max-h-48 overflow-y-auto pr-1">
@@ -689,7 +606,6 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
               </p>
             </div>
 
-            {/* Storyline if available */}
             {selectedGame.storyline && (
               <div>
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Enredo</h4>
@@ -699,37 +615,35 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
               </div>
             )}
 
-            {/* Metadata Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800/80 text-xs">
               <div>
-                <span className="text-slate-500 block mb-0.5">Desenvolvedora:</span>
-                <span className="text-slate-200 font-semibold">{selectedGame.developer || 'Não informada'}</span>
+                <span className="text-slate-400 block mb-0.5">Desenvolvedora</span>
+                <span className="text-slate-100 font-semibold">{selectedGame.developer || 'Não informada'}</span>
               </div>
               <div>
-                <span className="text-slate-500 block mb-0.5">Publicadora:</span>
-                <span className="text-slate-200 font-semibold">{selectedGame.publisher || 'Não informada'}</span>
+                <span className="text-slate-400 block mb-0.5">Publicadora</span>
+                <span className="text-slate-100 font-semibold">{selectedGame.publisher || 'Não informada'}</span>
               </div>
               <div className="sm:col-span-2">
-                <span className="text-slate-500 block mb-1">Gêneros:</span>
-                <span className="text-slate-300">
+                <span className="text-slate-400 block mb-0.5">Gêneros</span>
+                <span className="text-slate-200">
                   {selectedGame.genres.join(' · ') || 'Não informados'}
                 </span>
               </div>
               <div className="sm:col-span-2">
-                <span className="text-slate-500 block mb-1">Plataformas:</span>
-                <span className="text-slate-300">
+                <span className="text-slate-400 block mb-0.5">Plataformas</span>
+                <span className="text-slate-200">
                   {selectedGame.platforms.join(' · ') || 'Não informadas'}
                 </span>
               </div>
             </div>
 
-            {/* Footer Buttons */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-slate-800">
               {selectedGame.id && libraryMap[selectedGame.id] ? (
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs border-emerald-500/40 text-emerald-300 hover:bg-emerald-950/40"
+                  className="border-emerald-500/40 text-emerald-300 hover:bg-emerald-950/40"
                   leftIcon={<Check className="w-4 h-4" />}
                   onClick={() => {
                     setSelectedGame(null);
@@ -742,7 +656,6 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="text-xs"
                   leftIcon={<Plus className="w-4 h-4" />}
                   onClick={() => {
                     const target = selectedGame;
@@ -759,22 +672,27 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
                 size="sm"
                 leftIcon={<Bot className="w-4 h-4" />}
                 onClick={() => {
+                  const targetGameId = selectedGame.id || null;
                   setSelectedGame(null);
-                  onNavigate('companion');
+                  if (onOpenCompanion) {
+                    onOpenCompanion({ gameId: targetGameId });
+                  } else {
+                    onNavigate('companion');
+                  }
                 }}
               >
                 Abrir no Game Companion
               </Button>
             </div>
           </div>
-        </Modal>
-      )}
+        )}
+      </Modal>
 
-      {/* Modal: Choose Status to Add to Library */}
+      {/* Add to Library Status Modal */}
       <Modal
         isOpen={!!addingGame}
         onClose={() => !isAdding && setAddingGame(null)}
-        title="Adicionar à Biblioteca Pessoal"
+        title="Adicionar à Biblioteca"
         description={addingGame?.title}
         maxWidth="sm"
       >
@@ -785,8 +703,11 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
             </p>
 
             {addError && (
-              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2"
+              >
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                 <span>{addError}</span>
               </div>
             )}
@@ -797,8 +718,8 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
                   key={opt.value}
                   className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
                     chosenStatus === opt.value
-                      ? 'bg-violet-950/40 border-violet-500/60 text-white'
-                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      ? 'bg-violet-950/50 border-violet-400 text-white'
+                      : 'bg-[var(--bg-inset)] border-slate-800 text-slate-300 hover:border-slate-700'
                   }`}
                 >
                   <input
@@ -835,7 +756,7 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         )}
       </Modal>
 
-      {/* Modal: Prompt Authentication if Unauthenticated */}
+      {/* Auth Prompt Modal */}
       <Modal
         isOpen={!!loginPromptGame}
         onClose={() => setLoginPromptGame(null)}
@@ -844,11 +765,11 @@ export function ExploreView({ onNavigate }: ExploreViewProps) {
         maxWidth="sm"
       >
         <div className="space-y-4">
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950/80 border border-slate-800">
-            <Lock className="w-5 h-5 text-violet-400 shrink-0" />
+          <div className="flex items-start gap-3 p-3.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800">
+            <Lock className="w-5 h-5 text-violet-400 shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-xs text-slate-300 leading-relaxed">
               Para adicionar <strong className="text-white">{loginPromptGame?.title}</strong> à sua
-              coleção pessoal e sincronizar seu progresso no PostgreSQL, faça login ou crie uma conta.
+              coleção pessoal e acompanhar jornadas, entre na sua conta ou crie um cadastro.
             </p>
           </div>
           <div className="flex items-center justify-end gap-2">

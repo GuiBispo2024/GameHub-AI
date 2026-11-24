@@ -4,13 +4,15 @@
  */
 
 import { AuthProvider } from './contexts/AuthContext';
+import { ToastProvider } from './components/ui/Toast';
 import { AppLayout } from './components/layout/AppLayout';
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppLayout />
+      <ToastProvider>
+        <AppLayout />
+      </ToastProvider>
     </AuthProvider>
   );
 }
-

@@ -1,406 +1,601 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Server,
-  Database,
   Gamepad2,
   Bot,
-  Key,
-  ShieldAlert,
-  CheckCircle2,
-  AlertTriangle,
+  Compass,
+  Library,
+  Swords,
+  Clock,
+  Trophy,
+  Star,
   ArrowRight,
-  Sparkles,
-  Terminal,
-  Layers,
-  Code2,
-  MonitorCheck,
-  RefreshCw,
+  Plus,
+  MessageSquare,
+  MapPin,
+  ShieldCheck,
+  BookOpen,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { HealthResponse, NavTab } from '../types';
+import { Skeleton } from '../components/ui/Skeleton';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState } from '../components/ui/ErrorState';
+import { GameCover } from '../components/ui/GameCover';
+import { useAuth } from '../contexts/AuthContext';
+import { ApiService } from '../services/api';
+import {
+  AgentConversationSummary,
+  GameplayJourney,
+  LibraryEntry,
+  LibraryStats,
+  NavTab,
+} from '../types';
+import {
+  LIBRARY_STATUS_META,
+  formatHours,
+  formatShortDateBR,
+  getSpoilerLabel,
+} from '../utils/formatters';
 
 interface DashboardViewProps {
-  health: HealthResponse | null;
-  isLoading: boolean;
-  isOnline: boolean;
-  onRefresh: () => void;
   onNavigate: (tab: NavTab) => void;
+  onManageJourneys?: (entry: LibraryEntry) => void;
+  onOpenCompanion?: (context?: { gameId?: string | null; journeyId?: string | null }) => void;
 }
 
 export function DashboardView({
-  health,
-  isLoading,
-  isOnline,
-  onRefresh,
   onNavigate,
+  onManageJourneys,
+  onOpenCompanion,
 }: DashboardViewProps) {
-  const db = health?.database;
-  const isDbConnected = db?.connected === true;
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
 
-  return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      {/* Hero Welcome Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-violet-950/80 via-slate-900 to-blue-950/80 border border-violet-500/30 p-8 shadow-2xl shadow-violet-950/30">
-        <div className="absolute -right-16 -top-16 w-80 h-80 rounded-full bg-violet-600/15 blur-3xl pointer-events-none" />
-        <div className="absolute right-40 -bottom-20 w-80 h-80 rounded-full bg-blue-600/15 blur-3xl pointer-events-none" />
+  const [stats, setStats] = useState<LibraryStats | null>(null);
+  const [recentGames, setRecentGames] = useState<LibraryEntry[]>([]);
+  const [recentJourneys, setRecentJourneys] = useState<GameplayJourney[]>([]);
+  const [recentConversations, setRecentConversations] = useState<AgentConversationSummary[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-violet-500/20 text-violet-300 border border-violet-500/30">
-              <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-              <span>GameHub AI • Fase 1: Arquitetura & Fundação Inicial</span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-              Central de Comando <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-blue-400">Gamer & IA</span>
+  const fetchDashboardData = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setIsLoadingData(true);
+    setLoadError(null);
+
+    try {
+      const [statsRes, libRes, journeysRes, convsRes] = await Promise.allSettled([
+        ApiService.getLibraryStats(),
+        ApiService.getLibrary({ limit: 6, sort: 'recentlyUpdated' }),
+        ApiService.getJourneys({ limit: 4 }),
+        ApiService.getAgentConversations({ limit: 3 }),
+      ]);
+
+      if (statsRes.status === 'fulfilled') {
+        setStats(statsRes.value);
+      }
+      if (libRes.status === 'fulfilled') {
+        setRecentGames((libRes.value.data || []).filter((e) => Boolean(e && e.id)));
+      }
+      if (journeysRes.status === 'fulfilled') {
+        const list = (journeysRes.value.data || []).filter((j) => Boolean(j && j.id));
+        const activeFirst = [...list].sort((a, b) => Number(b.isActive) - Number(a.isActive));
+        setRecentJourneys(activeFirst.slice(0, 4));
+      }
+      if (convsRes.status === 'fulfilled') {
+        setRecentConversations((convsRes.value.data || []).filter((c) => Boolean(c && c.id)));
+      }
+
+      if (
+        statsRes.status === 'rejected' &&
+        libRes.status === 'rejected' &&
+        journeysRes.status === 'rejected'
+      ) {
+        setLoadError('Não foi possível carregar o resumo da sua conta no momento.');
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erro ao carregar o painel principal.');
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchDashboardData();
+    } else {
+      setStats(null);
+      setRecentGames([]);
+      setRecentJourneys([]);
+      setRecentConversations([]);
+      setLoadError(null);
+    }
+  }, [isAuthenticated, fetchDashboardData]);
+
+  if (isAuthLoading) {
+    return (
+      <div className="space-y-6 max-w-7xl mx-auto">
+        <Skeleton className="h-44 w-full rounded-2xl" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="space-y-8 max-w-7xl mx-auto pb-12">
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-950/75 via-[var(--bg-surface)] to-blue-950/65 border border-violet-500/30 p-6 sm:p-10 shadow-xl">
+          <div className="max-w-2xl space-y-4">
+            <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+              Sua biblioteca gamer organizada com acompanhamento inteligente de jornadas
             </h1>
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
-              Estrutura full stack inicial montada com Node.js + Express, Prisma ORM, PostgreSQL e React.
-              Ambiente preparado para integração com catálogo IGDB, agente inteligente Gemini e overlay desktop.
+              Pesquise títulos no catálogo oficial da IGDB, registre seu progresso por campanha e conte com o Game Companion para dicas fundamentadas e sem spoilers.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <Button
+                variant="primary"
+                size="md"
+                leftIcon={<Compass className="w-4 h-4" />}
+                onClick={() => onNavigate('explore')}
+              >
+                Explorar Catálogo
+              </Button>
+              <Button
+                variant="outline"
+                size="md"
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+                onClick={() => onNavigate('auth')}
+              >
+                Entrar ou Criar Conta
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Card glow="blue" className="p-5 flex flex-col justify-between gap-4">
+            <div className="space-y-2.5">
+              <div className="w-10 h-10 rounded-xl bg-blue-950/80 border border-blue-500/30 flex items-center justify-center text-blue-300">
+                <Compass className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <h2 className="text-base font-bold text-white">Catálogo IGDB em Tempo Real</h2>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Explore sinopses, datas de lançamento, plataformas e avaliações diretamente da base da IGDB.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start -ml-2 text-blue-300"
+              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              onClick={() => onNavigate('explore')}
+            >
+              Buscar jogos agora
+            </Button>
+          </Card>
+
+          <Card glow="violet" className="p-5 flex flex-col justify-between gap-4">
+            <div className="space-y-2.5">
+              <div className="w-10 h-10 rounded-xl bg-violet-950/80 border border-violet-500/30 flex items-center justify-center text-violet-300">
+                <Swords className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <h2 className="text-base font-bold text-white">Biblioteca, Jornadas & Builds</h2>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Separe múltiplas campanhas no mesmo jogo, registre marcos cronológicos e salve builds flexíveis para qualquer gênero.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start -ml-2 text-violet-300"
+              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              onClick={() => onNavigate('auth')}
+            >
+              Criar conta gratuita
+            </Button>
+          </Card>
+
+          <Card glow="indigo" className="p-5 flex flex-col justify-between gap-4">
+            <div className="space-y-2.5">
+              <div className="w-10 h-10 rounded-xl bg-indigo-950/80 border border-indigo-500/30 flex items-center justify-center text-indigo-300">
+                <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <h2 className="text-base font-bold text-white">Companion com Filtro Anti-Spoiler</h2>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Respostas baseadas na sua jornada atual e em guias verificados, respeitando o nível de spoilers escolhido por você.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start -ml-2 text-indigo-300"
+              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              onClick={() => onNavigate('auth')}
+            >
+              Acessar Companion
+            </Button>
+          </Card>
+        </section>
+      </div>
+    );
+  }
+
+  const playingCount = stats?.byStatus?.PLAYING ?? 0;
+
+  return (
+    <div className="space-y-7 max-w-7xl mx-auto pb-12">
+      {/* Greeting & Quick Actions */}
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-950/70 via-[var(--bg-surface)] to-blue-950/60 border border-violet-500/30 p-6 sm:p-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-2 max-w-2xl">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              Olá, {user?.username}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+              Acompanhe seus jogos em andamento, retome sua jornada ativa ou consulte o Game Companion com seu filtro de spoilers configurado.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <Button
-              variant="primary"
-              size="md"
-              leftIcon={<Gamepad2 className="w-4 h-4" />}
+              variant="secondary"
+              size="sm"
+              leftIcon={<Compass className="w-4 h-4" />}
               onClick={() => onNavigate('explore')}
             >
               Explorar Catálogo
             </Button>
             <Button
-              variant="secondary"
-              size="md"
+              variant="primary"
+              size="sm"
               leftIcon={<Bot className="w-4 h-4" />}
-              onClick={() => onNavigate('companion')}
+              onClick={() => (onOpenCompanion ? onOpenCompanion() : onNavigate('companion'))}
             >
-              Game Companion
+              Abrir Companion
             </Button>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Explicit Real Database & Backend Health Status (No fake simulation) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Backend Status Card */}
-        <Card glow="blue">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>
-                <Server className="w-5 h-5 text-blue-400" />
-                <span>Backend Express</span>
-              </CardTitle>
-              <Badge variant={isOnline ? 'success' : 'dropped'}>
-                {isOnline ? 'ONLINE (200 OK)' : 'OFFLINE'}
-              </Badge>
-            </div>
-            <CardDescription>
-              Servidor REST Node.js com endpoints modulares e health check ativo
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-                <span className="text-slate-400 block">Endpoint de Health:</span>
-                <span className="font-mono text-blue-300 font-semibold text-sm">/api/health</span>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-                <span className="text-slate-400 block">Tempo de Atividade:</span>
-                <span className="font-mono text-emerald-300 font-semibold text-sm">
-                  {health ? `${health.uptimeSeconds}s` : '---'}
-                </span>
-              </div>
-            </div>
+      {loadError && (
+        <ErrorState message={loadError} onRetry={fetchDashboardData} />
+      )}
 
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 font-mono text-xs text-slate-300 space-y-1">
-              <div className="text-slate-400 font-bold mb-1">// Endpoints de Health & Módulos no Express:</div>
-              <div className="text-emerald-400">✓ /health & /api/health → Dual Health Check (JSON estrito)</div>
-              <div className="text-violet-400">✓ /api/games → IGDB Catalog Router</div>
-              <div className="text-blue-400">✓ /api/library → User Personal Library Router</div>
-              <div className="text-indigo-400">✓ /api/agent → GameAgent Gemini AI Router</div>
-              <div className="text-amber-400">✓ /api/auth → JWT Authentication Router</div>
+      {/* Real Library Metrics Strip */}
+      <section aria-label="Resumo da sua biblioteca">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <Card className="p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-violet-950/80 border border-violet-500/30 flex items-center justify-center text-violet-300 shrink-0">
+              <Library className="w-5 h-5" aria-hidden="true" />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* PostgreSQL Database Status Card (EXPLICIT AND HONEST STATUS) */}
-        <Card glow={isDbConnected ? 'blue' : 'violet'}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>
-                <Database className="w-5 h-5 text-violet-400" />
-                <span>Neon PostgreSQL & Prisma ORM</span>
-              </CardTitle>
-              <Badge variant={isDbConnected ? 'success' : 'warning'}>
-                {isDbConnected ? 'CONECTADO (NEON)' : 'PENDENTE DE SECRETS'}
-              </Badge>
-            </div>
-            <CardDescription>
-              Prisma ORM 6.19.3 com suporte a pooler (DATABASE_URL) e conexão direta para migrations (DIRECT_URL)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Honest Status Notice Banner */}
-            <div
-              className={`p-4 rounded-xl border flex items-start gap-3 text-xs ${
-                isDbConnected
-                  ? 'bg-emerald-950/30 border-emerald-700/50 text-emerald-200'
-                  : 'bg-amber-950/30 border-amber-600/50 text-amber-200'
-              }`}
-            >
-              {isDbConnected ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-xs text-slate-400 truncate">Total na Biblioteca</div>
+              {isLoadingData && !stats ? (
+                <Skeleton className="h-6 w-14 mt-1" />
               ) : (
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xl font-bold text-white tabular-nums">
+                  {stats?.totalGames ?? 0}
+                </div>
               )}
-              <div className="space-y-1">
-                <div className="font-bold text-sm">
-                  {isDbConnected ? 'Neon PostgreSQL Conectado com Sucesso' : 'Neon PostgreSQL: Pendência de Secrets'}
-                </div>
-                <p className="text-slate-300 leading-relaxed">
-                  {db?.message ||
-                    'Nenhum banco PostgreSQL conectado no momento. Conforme especificado, o sistema não simula conexões falsas.'}
-                </p>
-              </div>
             </div>
+          </Card>
 
-            {/* Prisma Schema & Setup Instructions */}
-            <div className="space-y-2 text-xs">
-              <div className="text-slate-400 font-semibold flex items-center justify-between">
-                <span>Esquema Prisma (10 Modelos Auditados):</span>
-                <span className="text-violet-400 font-mono">prisma/schema.prisma</span>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5 font-mono text-[11px] text-slate-300">
-                <div className="text-slate-400"># Modelos gerados no client:</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="px-2 py-0.5 rounded bg-violet-950 text-violet-300 border border-violet-800">
-                    User
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-violet-950 text-violet-300 border border-violet-800">
-                    UserPreference
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
-                    Game
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-                    UserGame
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
-                    GameplayJourney
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-800">
-                    ProgressLog
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
-                    GameBuild
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">
-                    CompanionSession
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-violet-950 text-violet-300 border border-violet-800">
-                    CompanionMessage
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
-                    GameGuide
-                  </span>
-                </div>
-              </div>
+          <Card className="p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-emerald-950/80 border border-emerald-500/30 flex items-center justify-center text-emerald-300 shrink-0">
+              <Gamepad2 className="w-5 h-5" aria-hidden="true" />
             </div>
-          </CardContent>
-        </Card>
-      </div>
+            <div className="min-w-0">
+              <div className="text-xs text-slate-400 truncate">Jogando Agora</div>
+              {isLoadingData && !stats ? (
+                <Skeleton className="h-6 w-14 mt-1" />
+              ) : (
+                <div className="text-xl font-bold text-emerald-300 tabular-nums">
+                  {playingCount}
+                </div>
+              )}
+            </div>
+          </Card>
 
-      {/* Architecture Modules Grid */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
+          <Card className="p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-blue-950/80 border border-blue-500/30 flex items-center justify-center text-blue-300 shrink-0">
+              <Clock className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs text-slate-400 truncate">Horas Registradas</div>
+              {isLoadingData && !stats ? (
+                <Skeleton className="h-6 w-16 mt-1" />
+              ) : (
+                <div className="text-xl font-bold text-blue-300 tabular-nums">
+                  {formatHours(stats?.totalHoursPlayed)}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card className="p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-950/80 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0">
+              <Trophy className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs text-slate-400 truncate">Concluídos</div>
+              {isLoadingData && !stats ? (
+                <Skeleton className="h-6 w-20 mt-1" />
+              ) : (
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xl font-bold text-indigo-300 tabular-nums">
+                    {stats?.completedCount ?? 0}
+                  </span>
+                  {stats?.averageRating !== null && stats?.averageRating !== undefined && (
+                    <span className="text-[11px] text-amber-300 tabular-nums inline-flex items-center gap-0.5">
+                      <Star className="w-3 h-3 fill-amber-300 text-amber-300" aria-hidden="true" />
+                      {stats.averageRating}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+      </section>
+
+      {/* Recent / Active Games */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Arquitetura dos Módulos</h2>
-            <p className="text-xs text-slate-400">
-              Separação estrutural com lógica de negócio no backend e suporte à futura aplicação Desktop Overlay
-            </p>
+            <h2 className="text-lg font-bold text-white tracking-tight">Jogos Recentes na Biblioteca</h2>
+            <p className="text-xs text-slate-400">Últimos títulos atualizados na sua coleção pessoal</p>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            onClick={onRefresh}
-            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
+            rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+            onClick={() => onNavigate('library')}
           >
-            Atualizar Status
+            Ver biblioteca
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Module 1: Game Library */}
-          <Card className="hover:border-violet-500/40 transition-all cursor-pointer" onClick={() => onNavigate('library')}>
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-lg bg-violet-950 flex items-center justify-center text-violet-400 border border-violet-800">
-                  <Gamepad2 className="w-4 h-4" />
-                </div>
-                <Badge variant="default" size="sm">Fase 2</Badge>
-              </div>
-              <CardTitle className="text-sm">Game Library</CardTitle>
-              <CardDescription>
-                Catálogo integrado com IGDB, status pessoal, avaliações e progresso
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 text-xs text-slate-400">
-              <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-violet-300 font-medium">
-                <span>Ver estrutura</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Module 2: Game Companion */}
-          <Card className="hover:border-blue-500/40 transition-all cursor-pointer" onClick={() => onNavigate('companion')}>
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-950 flex items-center justify-center text-blue-400 border border-blue-800">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <Badge variant="ai" size="sm">Fase 3</Badge>
-              </div>
-              <CardTitle className="text-sm">Game Companion</CardTitle>
-              <CardDescription>
-                Agente Gemini contextualizado, controle anti-spoiler e builds
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 text-xs text-slate-400">
-              <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-blue-300 font-medium">
-                <span>Abrir Companion</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Module 3: JWT Auth */}
-          <Card className="hover:border-indigo-500/40 transition-all cursor-pointer" onClick={() => onNavigate('profile')}>
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-lg bg-indigo-950 flex items-center justify-center text-indigo-400 border border-indigo-800">
-                  <Key className="w-4 h-4" />
-                </div>
-                <Badge variant="default" size="sm">Fase 2</Badge>
-              </div>
-              <CardTitle className="text-sm">Autenticação JWT</CardTitle>
-              <CardDescription>
-                Lógica de autenticação com tokens seguros e perfis no PostgreSQL
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 text-xs text-slate-400">
-              <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-indigo-300 font-medium">
-                <span>Ver detalhes</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Module 4: Desktop Overlay Ready */}
-          <Card className="hover:border-emerald-500/40 transition-all">
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-950 flex items-center justify-center text-emerald-400 border border-emerald-800">
-                  <MonitorCheck className="w-4 h-4" />
-                </div>
-                <Badge variant="success" size="sm">Pronto</Badge>
-              </div>
-              <CardTitle className="text-sm">API Desktop Overlay</CardTitle>
-              <CardDescription>
-                CORS, headers padronizados e rotas desacopladas para app desktop
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 text-xs text-slate-400">
-              <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-emerald-300 font-medium">
-                <span>CORS & REST ativo</span>
-                <CheckCircle2 className="w-3.5 h-3.5" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Project Checklist & Technical Next Steps */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <Terminal className="w-5 h-5 text-indigo-400" />
-            <span>Checklist da Primeira Tarefa & Próximas Etapas</span>
-          </CardTitle>
-          <CardDescription>
-            Status do plano de desenvolvimento e dependências técnicas
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="space-y-3">
-              <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
-                Itens Concluídos nesta Entrega:
-              </h4>
-              <ul className="space-y-2">
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Estrutura full stack organizada em módulos frontend e backend</span>
-                </li>
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Layout base com tema escuro, azul e violeta</span>
-                </li>
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Sidebar completa: Dashboard, Explorar, Biblioteca, Companion e Perfil</span>
-                </li>
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Componentes de UI: Button, Card, Badge, Input, Modal, Skeleton, StatusIndicator</span>
-                </li>
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Endpoint de health no Express (/api/health) com diagnóstico real</span>
-                </li>
-                <li className="flex items-center gap-2 text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Configuração inicial de Prisma ORM com schema PostgreSQL completo</span>
-                </li>
-              </ul>
-            </div>
-
-            <div className="space-y-3">
-              <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
-                O Que Falta Configurar / Próximos Passos:
-              </h4>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2 text-amber-300">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Instância PostgreSQL & DATABASE_URL:</strong> Definir a string de conexão no .env e executar as migrações Prisma (<code className="font-mono bg-slate-900 px-1 py-0.5 rounded text-amber-200">npx prisma migrate dev</code>).
-                  </span>
-                </li>
-                <li className="flex items-start gap-2 text-slate-400">
-                  <ArrowRight className="w-4 h-4 shrink-0 mt-0.5 text-violet-400" />
-                  <span>
-                    <strong>Autenticação JWT:</strong> Registro e login de usuários, hash de senha com bcrypt e geração de tokens JWT.
-                  </span>
-                </li>
-                <li className="flex items-start gap-2 text-slate-400">
-                  <ArrowRight className="w-4 h-4 shrink-0 mt-0.5 text-violet-400" />
-                  <span>
-                    <strong>Integração com IGDB:</strong> Credenciais Twitch Developer para consulta e sincronização do catálogo de jogos.
-                  </span>
-                </li>
-                <li className="flex items-start gap-2 text-slate-400">
-                  <ArrowRight className="w-4 h-4 shrink-0 mt-0.5 text-violet-400" />
-                  <span>
-                    <strong>Agente Gemini:</strong> Integração com a API Gemini para o Game Companion com controle anti-spoilers e sugestões de builds.
-                  </span>
-                </li>
-              </ul>
-            </div>
+        {isLoadingData && recentGames.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <Skeleton className="h-32 rounded-2xl" />
+            <Skeleton className="h-32 rounded-2xl" />
+            <Skeleton className="h-32 rounded-2xl" />
           </div>
-        </CardContent>
-      </Card>
+        ) : recentGames.length === 0 ? (
+          <EmptyState
+            icon={<BookOpen className="w-6 h-6" />}
+            title="Sua biblioteca ainda está vazia"
+            description="Adicione jogos a partir do catálogo da IGDB para acompanhar seu progresso, horas jogadas e jornadas."
+            action={
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={<Plus className="w-4 h-4" />}
+                onClick={() => onNavigate('explore')}
+              >
+                Explorar Catálogo
+              </Button>
+            }
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {recentGames.map((entry) => {
+              const statusMeta = LIBRARY_STATUS_META[entry.status] || LIBRARY_STATUS_META.BACKLOG;
+              return (
+                <Card key={entry.id} glow="violet" className="p-4 flex gap-3.5 items-stretch">
+                  <GameCover
+                    src={entry.game.coverUrl}
+                    alt={entry.game.title}
+                    className="w-20 aspect-[3/4] rounded-xl border border-slate-800 shrink-0"
+                    iconSize="sm"
+                  />
+                  <div className="flex-1 min-w-0 flex flex-col justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <Badge variant={statusMeta.badgeVariant} size="sm">
+                          {statusMeta.label}
+                        </Badge>
+                        {entry.rating !== null && (
+                          <span className="text-xs font-bold text-amber-300 tabular-nums inline-flex items-center gap-1 shrink-0">
+                            <Star className="w-3 h-3 fill-amber-300 text-amber-300" aria-hidden="true" />
+                            {entry.rating}/10
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-bold text-white line-clamp-1">
+                        {entry.game.title}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 truncate tabular-nums">
+                        {formatHours(entry.hoursPlayed)}
+                        {entry.game.platforms.length > 0 ? ` · ${entry.game.platforms[0]}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      {onManageJourneys && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="flex-1 text-[11px] min-h-[32px] py-1"
+                          onClick={() => onManageJourneys(entry)}
+                        >
+                          Jornadas
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 text-[11px] min-h-[32px] py-1"
+                        onClick={() =>
+                          onOpenCompanion
+                            ? onOpenCompanion({ gameId: entry.gameId })
+                            : onNavigate('companion')
+                        }
+                      >
+                        Companion
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Active Journeys & Recent Companion Conversations */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <div>
+              <CardTitle>
+                <Swords className="w-4 h-4 text-violet-400" aria-hidden="true" />
+                <span>Jornadas de Gameplay</span>
+              </CardTitle>
+              <CardDescription>Campanhas em andamento e progresso salvo</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              onClick={() => onNavigate('journeys')}
+            >
+              Gerenciar
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {isLoadingData && recentJourneys.length === 0 ? (
+              <div className="space-y-2.5">
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+              </div>
+            ) : recentJourneys.length === 0 ? (
+              <div className="py-6 text-center space-y-2.5">
+                <p className="text-xs text-slate-400">
+                  Nenhuma jornada criada ainda. Crie uma jornada para registrar personagem, área atual e builds.
+                </p>
+                <Button variant="secondary" size="sm" onClick={() => onNavigate('journeys')}>
+                  Ir para Jornadas
+                </Button>
+              </div>
+            ) : (
+              recentJourneys.map((journey) => (
+                <div
+                  key={journey.id}
+                  className="p-3.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800/80 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-white truncate">
+                        {journey.name}
+                      </span>
+                      {journey.isActive && (
+                        <Badge variant="success" size="sm">Ativa</Badge>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 flex items-center gap-2 flex-wrap tabular-nums">
+                      {journey.game?.title && <span className="text-slate-300">{journey.game.title}</span>}
+                      {journey.currentArea && (
+                        <span className="inline-flex items-center gap-1">
+                          · <MapPin className="w-3 h-3 text-emerald-400" aria-hidden="true" />
+                          {journey.currentArea}
+                        </span>
+                      )}
+                      <span>· {formatHours(journey.playtimeHours)}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() =>
+                      onOpenCompanion
+                        ? onOpenCompanion({ gameId: journey.gameId, journeyId: journey.id })
+                        : onNavigate('journeys')
+                    }
+                  >
+                    Companion
+                  </Button>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <div>
+              <CardTitle>
+                <Bot className="w-4 h-4 text-blue-400" aria-hidden="true" />
+                <span>Conversas no Game Companion</span>
+              </CardTitle>
+              <CardDescription>Histórico recente com filtro anti-spoiler</CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              onClick={() => (onOpenCompanion ? onOpenCompanion() : onNavigate('companion'))}
+            >
+              Abrir chat
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {isLoadingData && recentConversations.length === 0 ? (
+              <div className="space-y-2.5">
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+              </div>
+            ) : recentConversations.length === 0 ? (
+              <div className="py-6 text-center space-y-2.5">
+                <p className="text-xs text-slate-400">
+                  Você ainda não iniciou nenhuma conversa com o Game Companion.
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => (onOpenCompanion ? onOpenCompanion() : onNavigate('companion'))}
+                >
+                  Iniciar Conversa
+                </Button>
+              </div>
+            ) : (
+              recentConversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  className="p-3.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800/80 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-3.5 h-3.5 text-violet-400 shrink-0" aria-hidden="true" />
+                      <span className="text-sm font-semibold text-white truncate">{conv.title}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 tabular-nums truncate">
+                      {conv.mode === 'LIBRARY' ? 'Biblioteca' : 'Companion'} ·{' '}
+                      {getSpoilerLabel(conv.spoilerLevel)} · {conv.messageCount} msg
+                      {conv.messageCount === 1 ? '' : 's'} · {formatShortDateBR(conv.updatedAt)}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => onNavigate('companion')}
+                  >
+                    Abrir
+                  </Button>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

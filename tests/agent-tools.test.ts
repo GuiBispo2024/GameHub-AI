@@ -298,6 +298,7 @@ describe('GameHub AI — Function Calling, Ferramentas e Confirmação Persisten
 
     const testRegistry = new ToolsRegistry([
       createSearchGamesTool(mockGamesService),
+      createSearchGameKnowledgeTool(),
       createGetUserLibraryTool(),
       createGetUserPreferencesTool(),
       createGetJourneyContextTool(),

@@ -3,32 +3,33 @@ import {
   User as UserIcon,
   Shield,
   Key,
-  Database,
-  Monitor,
   CheckCircle2,
   AlertTriangle,
-  Laptop,
-  Flame,
   Gamepad2,
   LogOut,
   Save,
-  Sparkles,
   Sliders,
   Check,
   Languages,
   Layers,
-  Edit3,
+  Palette,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Input } from '../components/ui/Input';
+import { Select } from '../components/ui/Select';
+import { Textarea } from '../components/ui/Textarea';
+import { PageHeader } from '../components/ui/PageHeader';
+import { EmptyState } from '../components/ui/EmptyState';
+import { useToast } from '../components/ui/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
-import { HealthResponse, FriendlySpoilerLevel, NavTab } from '../types';
+import { FriendlySpoilerLevel, NavTab } from '../types';
+import { getSafeHttpUrl } from '../utils/url';
+import { formatShortDateBR } from '../utils/formatters';
 
 interface ProfileViewProps {
-  health: HealthResponse | null;
   onNavigate?: (tab: NavTab) => void;
 }
 
@@ -57,27 +58,38 @@ const AVAILABLE_GENRES = [
 ];
 
 const SPOILER_LEVELS: { id: FriendlySpoilerLevel; label: string; desc: string }[] = [
-  { id: 'NONE', label: 'Sem Spoilers (NONE)', desc: 'Apenas mecânicas básicas e tutoriais. Nenhuma revelação de enredo.' },
-  { id: 'LIGHT', label: 'Spoilers Leves (LIGHT)', desc: 'Respeita o capítulo atual e mecânicas do jogo.' },
-  { id: 'ALL', label: 'Spoilers Liberados (ALL)', desc: 'Livre acesso a lore, chefes secretos e desfechos da história.' },
+  {
+    id: 'NONE',
+    label: 'Zero Spoilers',
+    desc: 'Apenas mecânicas básicas e tutoriais. Nenhuma revelação de enredo.',
+  },
+  {
+    id: 'LIGHT',
+    label: 'Spoilers Leves',
+    desc: 'Respeita o capítulo atual da jornada sem adiantar reviravoltas.',
+  },
+  {
+    id: 'ALL',
+    label: 'Spoilers Liberados',
+    desc: 'Acesso completo a lore, chefes secretos e desfechos.',
+  },
 ];
 
-export function ProfileView({ health, onNavigate }: ProfileViewProps) {
+export function ProfileView({ onNavigate }: ProfileViewProps) {
   const { user, isAuthenticated, logout, updateUserProfileState, updateUserPreferencesState } = useAuth();
+  const { showToast } = useToast();
 
-  // Profile edit fields
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarError, setAvatarError] = useState(false);
 
-  // Preference edit fields
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [spoilerLevel, setSpoilerLevel] = useState<FriendlySpoilerLevel>('LIGHT');
   const [language, setLanguage] = useState('pt-BR');
   const [theme, setTheme] = useState('dark');
 
-  // UI status
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingPrefs, setIsSavingPrefs] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -88,6 +100,7 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
       setUsername(user.username || '');
       setBio(user.bio || '');
       setAvatarUrl(user.avatarUrl || '');
+      setAvatarError(false);
 
       if (user.preferences) {
         setSelectedPlatforms(user.preferences.preferredPlatforms || ['PC']);
@@ -99,21 +112,41 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
     }
   }, [user]);
 
+  const handleThemeSelect = (nextTheme: string) => {
+    setTheme(nextTheme);
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme =
+        nextTheme === 'neon' || nextTheme === 'high-contrast' ? nextTheme : 'dark';
+    }
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileMessage(null);
+    const trimmedAvatar = avatarUrl.trim();
+    if (trimmedAvatar && !getSafeHttpUrl(trimmedAvatar)) {
+      setProfileMessage({
+        type: 'error',
+        text: 'Informe uma URL válida iniciada por http:// ou https:// para o avatar.',
+      });
+      return;
+    }
+
     try {
       setIsSavingProfile(true);
       const updated = await ApiService.updateProfile({
-        username,
+        username: username.trim(),
         bio: bio.trim() || null,
-        avatarUrl: avatarUrl.trim() || null,
+        avatarUrl: trimmedAvatar || null,
       });
       updateUserProfileState(updated);
-      setProfileMessage({ type: 'success', text: 'Perfil gamer atualizado com sucesso!' });
-      setTimeout(() => setProfileMessage(null), 3000);
+      setAvatarError(false);
+      setProfileMessage({ type: 'success', text: 'Perfil atualizado com sucesso.' });
+      showToast({ variant: 'success', message: 'Perfil atualizado.' });
     } catch (err: any) {
-      setProfileMessage({ type: 'error', text: err.message || 'Erro ao atualizar perfil.' });
+      const msg = err.message || 'Erro ao atualizar perfil.';
+      setProfileMessage({ type: 'error', text: msg });
+      showToast({ variant: 'error', message: msg });
     } finally {
       setIsSavingProfile(false);
     }
@@ -132,10 +165,12 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
         theme,
       });
       updateUserPreferencesState(updatedPrefs);
-      setPrefsMessage({ type: 'success', text: 'Preferências gamer salvas com sucesso!' });
-      setTimeout(() => setPrefsMessage(null), 3000);
+      setPrefsMessage({ type: 'success', text: 'Preferências salvas com sucesso.' });
+      showToast({ variant: 'success', message: 'Preferências salvas.' });
     } catch (err: any) {
-      setPrefsMessage({ type: 'error', text: err.message || 'Erro ao salvar preferências.' });
+      const msg = err.message || 'Erro ao salvar preferências.';
+      setPrefsMessage({ type: 'error', text: msg });
+      showToast({ variant: 'error', message: msg });
     } finally {
       setIsSavingPrefs(false);
     }
@@ -155,166 +190,136 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
 
   const handleLogout = async () => {
     await logout();
+    showToast({ variant: 'info', message: 'Você saiu da sua conta.' });
     if (onNavigate) onNavigate('dashboard');
   };
 
-  // If user is not authenticated, present an invitation to login / register
   if (!isAuthenticated) {
     return (
-      <div className="max-w-xl mx-auto my-12 space-y-6 text-center">
-        <Card glow="violet" className="p-8 space-y-5">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-violet-600 to-blue-600 flex items-center justify-center mx-auto shadow-xl shadow-violet-900/40">
-            <Key className="w-8 h-8 text-white" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-white tracking-tight">Acesso ao Perfil Gamer</h2>
-            <p className="text-xs text-slate-400 mt-2 max-w-md mx-auto">
-              Cadastre-se ou faça login com JWT e Argon2id para acessar seu perfil gamer, salvar preferências e sincronizar sua biblioteca pessoal.
-            </p>
-          </div>
-          <div className="flex justify-center gap-3 pt-2">
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => onNavigate && onNavigate('auth')}
-            >
-              Fazer Login / Cadastrar
+      <div className="max-w-lg mx-auto py-10 sm:py-16">
+        <EmptyState
+          icon={<Key className="w-7 h-7" />}
+          title="Acesso ao Perfil Gamer"
+          description="Entre ou crie uma conta para editar sua identidade gamer, plataformas favoritas e nível de proteção contra spoilers."
+          action={
+            <Button variant="primary" onClick={() => onNavigate && onNavigate('auth')}>
+              Entrar ou Cadastrar
             </Button>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => onNavigate && onNavigate('dashboard')}
-            >
-              Voltar ao Dashboard
+          }
+          secondaryAction={
+            <Button variant="outline" onClick={() => onNavigate && onNavigate('dashboard')}>
+              Voltar ao Início
             </Button>
-          </div>
-        </Card>
+          }
+        />
       </div>
     );
   }
 
-  return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Perfil Gamer & Preferências</h1>
-            <Badge variant="ai">Autenticado</Badge>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Gerenciamento de credenciais, plataformas favoritas, regras de spoiler e integração.
-          </p>
-        </div>
+  const safeAvatarPreview = getSafeHttpUrl(user?.avatarUrl);
 
-        <div className="flex items-center gap-2.5">
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      <PageHeader
+        title="Perfil & Preferências"
+        subtitle="Personalize seus dados de jogador, plataformas, gêneros favoritos e política anti-spoiler."
+        badge={<Badge variant="ai" size="sm">Conta Conectada</Badge>}
+        actions={
           <Button
             variant="danger"
             size="sm"
             leftIcon={<LogOut className="w-4 h-4" />}
             onClick={handleLogout}
           >
-            Encerrar Sessão (Logout)
+            Encerrar Sessão
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Gamer Identity Card & Edit Profile */}
-        <Card glow="violet" className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Left Column: Identity */}
+        <Card glow="violet">
           <CardHeader>
             <CardTitle>
-              <UserIcon className="w-5 h-5 text-violet-400" />
+              <UserIcon className="w-5 h-5 text-violet-400" aria-hidden="true" />
               <span>Identidade Gamer</span>
             </CardTitle>
-            <CardDescription>
-              Dados da sua conta no GameHub AI protegidos por Argon2id
-            </CardDescription>
+            <CardDescription>Informações visíveis da sua conta</CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-5">
-            {/* User Avatar & Level */}
-            <div className="text-center space-y-3">
-              <div className="relative inline-block">
-                <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-500 p-1 shadow-xl shadow-violet-900/40 mx-auto overflow-hidden">
-                  {user?.avatarUrl ? (
-                    <img
-                      src={user.avatarUrl}
-                      alt={user.username}
-                      className="w-full h-full object-cover rounded-[14px]"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                      <UserIcon className="w-10 h-10 text-violet-400" />
-                    </div>
-                  )}
-                </div>
-                <span className="absolute -bottom-1 -right-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-violet-500 to-blue-500 text-white shadow-md">
-                  LVL 1
-                </span>
+            <div className="text-center space-y-2.5">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-500 p-0.5 shadow-lg shadow-violet-950/50 mx-auto overflow-hidden">
+                {safeAvatarPreview && !avatarError ? (
+                  <img
+                    src={safeAvatarPreview}
+                    alt={user?.username || 'Avatar do usuário'}
+                    referrerPolicy="no-referrer"
+                    onError={() => setAvatarError(true)}
+                    className="w-full h-full object-cover rounded-[14px]"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+                    <UserIcon className="w-9 h-9 text-violet-300" aria-hidden="true" />
+                  </div>
+                )}
               </div>
 
               <div>
-                <h3 className="font-bold text-lg text-white">{user?.username}</h3>
-                <p className="text-xs text-slate-400 font-mono">{user?.email}</p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Membro desde {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('pt-BR') : 'Hoje'}
+                <h2 className="font-bold text-lg text-white">{user?.username}</h2>
+                <p className="text-xs text-slate-400 font-mono break-all">{user?.email}</p>
+                <p className="text-[11px] text-slate-400 mt-1 tabular-nums">
+                  Membro desde {formatShortDateBR(user?.createdAt)}
                 </p>
               </div>
             </div>
 
-            {/* Profile Feedback Alert */}
             {profileMessage && (
               <div
-                className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                role={profileMessage.type === 'error' ? 'alert' : 'status'}
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
                   profileMessage.type === 'success'
-                    ? 'bg-emerald-950/70 border border-emerald-700/60 text-emerald-200'
-                    : 'bg-red-950/70 border border-red-700/60 text-red-200'
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200'
+                    : 'bg-rose-950/60 border-rose-500/40 text-rose-200'
                 }`}
               >
                 {profileMessage.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
                 ) : (
-                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                 )}
                 <span>{profileMessage.text}</span>
               </div>
             )}
 
-            {/* Edit Profile Form */}
-            <form onSubmit={handleSaveProfile} className="space-y-3 pt-2 border-t border-slate-800">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Gamer Tag (Username)</label>
-                <Input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Seu nome gamer"
-                  required
-                />
-              </div>
+            <form onSubmit={handleSaveProfile} className="space-y-3.5 pt-2 border-t border-slate-800">
+              <Input
+                label="Gamer Tag (Nome de usuário)"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Seu nome gamer"
+                required
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Bio Gamer</label>
-                <textarea
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  rows={2}
-                  maxLength={300}
-                  placeholder="Compartilhe seu estilo de jogo, classes favoritas..."
-                  className="w-full bg-slate-900/90 text-slate-100 placeholder:text-slate-500 rounded-xl border border-slate-700/80 p-2.5 text-xs focus:outline-none focus:border-violet-500 transition-all resize-none"
-                />
-              </div>
+              <Textarea
+                label="Bio"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                rows={3}
+                maxLength={300}
+                showCount
+                placeholder="Compartilhe seu estilo de jogo e franquias favoritas..."
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">URL do Avatar</label>
-                <Input
-                  type="url"
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  placeholder="https://exemplo.com/avatar.jpg"
-                />
-              </div>
+              <Input
+                label="URL do Avatar"
+                type="url"
+                value={avatarUrl}
+                onChange={(e) => setAvatarUrl(e.target.value)}
+                placeholder="https://exemplo.com/avatar.jpg"
+                helperText="Opcional. Deve iniciar com https:// ou http://."
+              />
 
               <Button
                 type="submit"
@@ -322,56 +327,52 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                 size="sm"
                 className="w-full"
                 isLoading={isSavingProfile}
-                leftIcon={<Save className="w-3.5 h-3.5" />}
+                leftIcon={<Save className="w-4 h-4" />}
               >
-                Salvar Dados do Perfil
+                Salvar Perfil
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        {/* Right Columns: Gamer Preferences */}
-        <div className="lg:col-span-2 space-y-6">
+        {/* Right Columns: Preferences */}
+        <div className="lg:col-span-2">
           <Card glow="blue">
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>
-                  <Sliders className="w-5 h-5 text-blue-400" />
-                  <span>Preferências de Gameplay & IA</span>
-                </CardTitle>
-                <Badge variant="playing" size="sm">Persistido no Neon</Badge>
-              </div>
+              <CardTitle>
+                <Sliders className="w-5 h-5 text-blue-400" aria-hidden="true" />
+                <span>Preferências de Gameplay & IA</span>
+              </CardTitle>
               <CardDescription>
-                Personalize suas plataformas, gêneros prediletos e o rigor do filtro anti-spoiler
+                Essas configurações orientam recomendações e o filtro anti-spoiler padrão do Game Companion.
               </CardDescription>
             </CardHeader>
 
             <CardContent>
-              {/* Preferences Feedback Alert */}
               {prefsMessage && (
                 <div
-                  className={`p-3 mb-4 rounded-xl text-xs flex items-center gap-2 ${
+                  role={prefsMessage.type === 'error' ? 'alert' : 'status'}
+                  className={`p-3 mb-4 rounded-xl border text-xs flex items-center gap-2 ${
                     prefsMessage.type === 'success'
-                      ? 'bg-emerald-950/70 border border-emerald-700/60 text-emerald-200'
-                      : 'bg-red-950/70 border border-red-700/60 text-red-200'
+                      ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200'
+                      : 'bg-rose-950/60 border-rose-500/40 text-rose-200'
                   }`}
                 >
                   {prefsMessage.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
                   ) : (
-                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                   )}
                   <span>{prefsMessage.text}</span>
                 </div>
               )}
 
               <form onSubmit={handleSavePreferences} className="space-y-6">
-                {/* 1. Spoiler Control Rule */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-                    <Shield className="w-4 h-4 text-amber-400" />
-                    <span>Nível Padrão de Controle Anti-Spoiler</span>
-                  </label>
+                <fieldset className="space-y-2.5">
+                  <legend className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Shield className="w-4 h-4 text-amber-400" aria-hidden="true" />
+                    <span>Nível Padrão Anti-Spoiler</span>
+                  </legend>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {SPOILER_LEVELS.map((opt) => {
                       const isSelected = spoilerLevel === opt.id;
@@ -379,30 +380,30 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                         <button
                           key={opt.id}
                           type="button"
+                          aria-pressed={isSelected}
                           onClick={() => setSpoilerLevel(opt.id)}
-                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          className={`p-3.5 rounded-xl border text-left transition-colors cursor-pointer flex flex-col justify-between gap-1.5 ${
                             isSelected
-                              ? 'bg-violet-950/80 border-violet-500 text-white shadow-md shadow-violet-950/50'
-                              : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                              ? 'bg-violet-950/70 border-violet-400 text-white'
+                              : 'bg-[var(--bg-inset)] border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'
                           }`}
                         >
-                          <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-bold">{opt.label}</span>
-                            {isSelected && <Check className="w-4 h-4 text-violet-400" />}
+                            {isSelected && <Check className="w-4 h-4 text-violet-300 shrink-0" aria-hidden="true" />}
                           </div>
-                          <p className="text-[11px] text-slate-400 leading-tight">{opt.desc}</p>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">{opt.desc}</p>
                         </button>
                       );
                     })}
                   </div>
-                </div>
+                </fieldset>
 
-                {/* 2. Favorite Platforms */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-                    <Gamepad2 className="w-4 h-4 text-blue-400" />
+                <fieldset className="space-y-2.5">
+                  <legend className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Gamepad2 className="w-4 h-4 text-blue-400" aria-hidden="true" />
                     <span>Plataformas Favoritas</span>
-                  </label>
+                  </legend>
                   <div className="flex flex-wrap gap-2">
                     {AVAILABLE_PLATFORMS.map((platform) => {
                       const isSelected = selectedPlatforms.includes(platform);
@@ -410,11 +411,12 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                         <button
                           key={platform}
                           type="button"
+                          aria-pressed={isSelected}
                           onClick={() => togglePlatform(platform)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                          className={`px-3 py-2 min-h-[36px] rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
                             isSelected
-                              ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-900/30'
-                              : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-900'
+                              ? 'bg-blue-600 text-white border-blue-400'
+                              : 'bg-[var(--bg-inset)] text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
                           }`}
                         >
                           {platform}
@@ -422,14 +424,13 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                       );
                     })}
                   </div>
-                </div>
+                </fieldset>
 
-                {/* 3. Favorite Genres */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-                    <Layers className="w-4 h-4 text-violet-400" />
+                <fieldset className="space-y-2.5">
+                  <legend className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Layers className="w-4 h-4 text-violet-400" aria-hidden="true" />
                     <span>Gêneros Favoritos</span>
-                  </label>
+                  </legend>
                   <div className="flex flex-wrap gap-2">
                     {AVAILABLE_GENRES.map((genre) => {
                       const isSelected = selectedGenres.includes(genre);
@@ -437,11 +438,12 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                         <button
                           key={genre}
                           type="button"
+                          aria-pressed={isSelected}
                           onClick={() => toggleGenre(genre)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                          className={`px-3 py-2 min-h-[36px] rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
                             isSelected
-                              ? 'bg-violet-600 text-white border-violet-400 shadow-md shadow-violet-900/30'
-                              : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-900'
+                              ? 'bg-violet-600 text-white border-violet-400'
+                              : 'bg-[var(--bg-inset)] text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
                           }`}
                         >
                           {genre}
@@ -449,44 +451,39 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                       );
                     })}
                   </div>
+                </fieldset>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-800">
+                  <Select
+                    label="Idioma da Interface"
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                  >
+                    <option value="pt-BR">Português (Brasil)</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="es-ES">Español</option>
+                  </Select>
+
+                  <Select
+                    label="Tema Visual"
+                    value={theme}
+                    onChange={(e) => handleThemeSelect(e.target.value)}
+                  >
+                    <option value="dark">Grafite & Violeta (Padrão)</option>
+                    <option value="neon">Azul Profundo & Neon</option>
+                    <option value="high-contrast">Alto Contraste (Acessível)</option>
+                  </Select>
                 </div>
 
-                {/* 4. Language & Theme Selection */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Languages className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Idioma Preferido</span>
-                    </label>
-                    <select
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
-                      className="w-full bg-slate-950 text-xs text-white rounded-xl p-2.5 border border-slate-800 focus:outline-none focus:border-violet-500"
-                    >
-                      <option value="pt-BR">Português (Brasil)</option>
-                      <option value="en-US">English (US)</option>
-                      <option value="es-ES">Español</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Tema da Interface</span>
-                    </label>
-                    <select
-                      value={theme}
-                      onChange={(e) => setTheme(e.target.value)}
-                      className="w-full bg-slate-950 text-xs text-white rounded-xl p-2.5 border border-slate-800 focus:outline-none focus:border-violet-500"
-                    >
-                      <option value="dark">Escuro com Brilho Violeta (Padrão)</option>
-                      <option value="neon">Neon Cyberpunk</option>
-                      <option value="high-contrast">Alto Contraste</option>
-                    </select>
-                  </div>
+                <div className="flex items-center justify-between gap-3 pt-2 text-[11px] text-slate-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Palette className="w-3.5 h-3.5 text-violet-400" aria-hidden="true" />
+                    <Languages className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+                    <span>As alterações de tema aplicam imediatamente na visualização.</span>
+                  </span>
                 </div>
 
-                <div className="pt-2">
+                <div>
                   <Button
                     type="submit"
                     variant="primary"
@@ -494,7 +491,7 @@ export function ProfileView({ health, onNavigate }: ProfileViewProps) {
                     isLoading={isSavingPrefs}
                     leftIcon={<Save className="w-4 h-4" />}
                   >
-                    Salvar Preferências Gamer
+                    Salvar Preferências
                   </Button>
                 </div>
               </form>

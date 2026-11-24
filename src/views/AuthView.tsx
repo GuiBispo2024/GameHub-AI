@@ -7,13 +7,14 @@ import {
   ArrowRight,
   ShieldCheck,
   AlertCircle,
-  Sparkles,
   KeyRound,
   CheckCircle2,
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
+import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Tabs } from '../components/ui/Tabs';
+import { useToast } from '../components/ui/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { NavTab } from '../types';
 
@@ -25,21 +26,25 @@ interface AuthViewProps {
 export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewProps) {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const { login, register } = useAuth();
+  const { showToast } = useToast();
 
-  // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Register form state
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
 
-  // UI state
   const [isLoading, setIsLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const handleModeChange = (nextMode: 'login' | 'register') => {
+    setMode(nextMode);
+    setFormError(null);
+    setSuccessMessage(null);
+  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,9 +60,10 @@ export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewP
       setIsLoading(true);
       await login(loginEmail, loginPassword);
       setSuccessMessage('Login realizado com sucesso! Redirecionando...');
+      showToast({ variant: 'success', message: 'Sessão iniciada com sucesso.' });
       setTimeout(() => {
-        if (onSuccessNavigate) onSuccessNavigate('profile');
-      }, 700);
+        if (onSuccessNavigate) onSuccessNavigate('dashboard');
+      }, 450);
     } catch (err: any) {
       setFormError(err.message || 'Credenciais inválidas.');
     } finally {
@@ -88,10 +94,11 @@ export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewP
     try {
       setIsLoading(true);
       await register(regUsername, regEmail, regPassword, regConfirmPassword);
-      setSuccessMessage('Conta gamer criada com sucesso! Redirecionando...');
+      setSuccessMessage('Conta criada com sucesso! Redirecionando...');
+      showToast({ variant: 'success', message: 'Bem-vindo ao GameHub AI!' });
       setTimeout(() => {
         if (onSuccessNavigate) onSuccessNavigate('profile');
-      }, 800);
+      }, 500);
     } catch (err: any) {
       setFormError(err.message || 'Erro ao criar conta.');
     } finally {
@@ -100,99 +107,77 @@ export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewP
   };
 
   return (
-    <div className="max-w-md mx-auto my-6 space-y-6">
-      {/* Brand Hero for Auth */}
+    <div className="max-w-md mx-auto my-4 sm:my-8 space-y-6">
       <div className="text-center space-y-2">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-600 flex items-center justify-center shadow-xl shadow-violet-600/30 border border-violet-400/40 mx-auto">
-          <Gamepad2 className="w-8 h-8 text-white" />
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-600 flex items-center justify-center shadow-lg shadow-violet-950/50 mx-auto">
+          <Gamepad2 className="w-6 h-6 text-white" aria-hidden="true" />
         </div>
-        <h1 className="text-2xl font-black text-white tracking-tight">
-          GameHub <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-blue-400">AI</span>
+        <h1 className="text-2xl font-extrabold text-white tracking-tight">
+          GameHub AI
         </h1>
-        <p className="text-xs text-slate-400">
-          Sua biblioteca inteligente de jogos e acompanhamento de gameplay com IA.
+        <p className="text-xs sm:text-sm text-slate-400">
+          Acesse sua biblioteca pessoal, jornadas e Game Companion.
         </p>
       </div>
 
-      {/* Auth Card */}
-      <Card glow="violet" className="border-violet-500/30 shadow-2xl shadow-violet-950/40">
-        {/* Toggle Mode Tabs */}
-        <div className="grid grid-cols-2 p-1 bg-slate-950/80 border-b border-slate-800">
-          <button
-            type="button"
-            onClick={() => {
-              setMode('login');
-              setFormError(null);
-              setSuccessMessage(null);
-            }}
-            className={`py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-              mode === 'login'
-                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Entrar (Login)
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode('register');
-              setFormError(null);
-              setSuccessMessage(null);
-            }}
-            className={`py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-              mode === 'register'
-                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Criar Conta
-          </button>
+      <Card glow="violet" className="border-slate-700/80">
+        <div className="p-2 bg-[var(--bg-inset)] border-b border-slate-800">
+          <Tabs
+            activeId={mode}
+            onChange={handleModeChange}
+            ariaLabel="Modo de autenticação"
+            className="grid grid-cols-2"
+            items={[
+              { id: 'login', label: 'Entrar' },
+              { id: 'register', label: 'Criar Conta' },
+            ]}
+          />
         </div>
 
-        <CardContent className="p-6 space-y-4">
-          {/* Error Message Alert */}
+        <CardContent className="p-5 sm:p-6 space-y-4">
           {formError && (
-            <div className="p-3.5 rounded-xl bg-red-950/60 border border-red-700/60 text-red-200 text-xs flex items-start gap-2.5 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div
+              role="alert"
+              className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{formError}</span>
             </div>
           )}
 
-          {/* Success Message Alert */}
           {successMessage && (
-            <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-700/60 text-emerald-200 text-xs flex items-start gap-2.5 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <div
+              role="status"
+              className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-start gap-2.5"
+            >
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{successMessage}</span>
             </div>
           )}
 
-          {/* Login Form */}
-          {mode === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Email Gamer</label>
-                <Input
-                  type="email"
-                  placeholder="seu.email@exemplo.com"
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  leftIcon={<Mail className="w-4 h-4" />}
-                  required
-                />
-              </div>
+          {mode === 'login' ? (
+            <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate>
+              <Input
+                label="E-mail"
+                type="email"
+                autoComplete="email"
+                placeholder="seu.email@exemplo.com"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                leftIcon={<Mail className="w-4 h-4" />}
+                required
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Senha</label>
-                <Input
-                  type="password"
-                  placeholder="••••••••"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  leftIcon={<Lock className="w-4 h-4" />}
-                  required
-                />
-              </div>
+              <Input
+                label="Senha"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Sua senha de acesso"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                leftIcon={<Lock className="w-4 h-4" />}
+                required
+              />
 
               <Button
                 type="submit"
@@ -205,62 +190,56 @@ export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewP
                 Entrar na Plataforma
               </Button>
             </form>
-          )}
+          ) : (
+            <form onSubmit={handleRegisterSubmit} className="space-y-3.5" noValidate>
+              <Input
+                label="Nome de Usuário (Gamer Tag)"
+                type="text"
+                autoComplete="username"
+                placeholder="Ex: GhostRider99"
+                value={regUsername}
+                onChange={(e) => setRegUsername(e.target.value)}
+                leftIcon={<User className="w-4 h-4" />}
+                required
+              />
 
-          {/* Register Form */}
-          {mode === 'register' && (
-            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Nome de Usuário (Gamer Tag)</label>
-                <Input
-                  type="text"
-                  placeholder="ex: GhostRider99"
-                  value={regUsername}
-                  onChange={(e) => setRegUsername(e.target.value)}
-                  leftIcon={<User className="w-4 h-4" />}
-                  required
-                />
-              </div>
+              <Input
+                label="E-mail"
+                type="email"
+                autoComplete="email"
+                placeholder="seu.email@exemplo.com"
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+                leftIcon={<Mail className="w-4 h-4" />}
+                required
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Email</label>
-                <Input
-                  type="email"
-                  placeholder="seu.email@exemplo.com"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  leftIcon={<Mail className="w-4 h-4" />}
-                  required
-                />
-              </div>
+              <Input
+                label="Senha"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Mínimo 8 caracteres"
+                helperText="Use letras maiúsculas, minúsculas e números."
+                value={regPassword}
+                onChange={(e) => setRegPassword(e.target.value)}
+                leftIcon={<Lock className="w-4 h-4" />}
+                required
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Senha (mínimo 8 caracteres)</label>
-                <Input
-                  type="password"
-                  placeholder="Maiúsculas, minúsculas e números"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  leftIcon={<Lock className="w-4 h-4" />}
-                  required
-                />
-              </div>
+              <Input
+                label="Confirmar Senha"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Repita sua senha"
+                value={regConfirmPassword}
+                onChange={(e) => setRegConfirmPassword(e.target.value)}
+                leftIcon={<KeyRound className="w-4 h-4" />}
+                required
+              />
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Confirmar Senha</label>
-                <Input
-                  type="password"
-                  placeholder="Repita sua senha"
-                  value={regConfirmPassword}
-                  onChange={(e) => setRegConfirmPassword(e.target.value)}
-                  leftIcon={<KeyRound className="w-4 h-4" />}
-                  required
-                />
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Senhas protegidas com hashing criptográfico Argon2id.</span>
+              <div className="p-2.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+                <span>Sua conta e preferências são armazenadas com segurança.</span>
               </div>
 
               <Button
@@ -271,7 +250,7 @@ export function AuthView({ onSuccessNavigate, initialMode = 'login' }: AuthViewP
                 isLoading={isLoading}
                 rightIcon={<ArrowRight className="w-4 h-4" />}
               >
-                Criar Conta Gamer
+                Criar Conta
               </Button>
             </form>
           )}

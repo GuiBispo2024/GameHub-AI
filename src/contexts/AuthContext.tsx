@@ -40,6 +40,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
+  useEffect(() => {
+    const activeTheme = user?.preferences?.theme || 'dark';
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme =
+        activeTheme === 'neon' || activeTheme === 'high-contrast' ? activeTheme : 'dark';
+    }
+  }, [user?.preferences?.theme]);
+
   const login = async (email: string, password: string) => {
     setError(null);
     try {

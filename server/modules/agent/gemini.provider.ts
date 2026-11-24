@@ -44,9 +44,9 @@ export class GeminiProvider implements AIProvider {
       rawFallback && rawFallback.trim() && rawFallback.trim() !== this.model
         ? rawFallback.trim()
         : null;
-    this.defaultTimeoutMs = options.timeoutMs ?? ENV.GEMINI_TIMEOUT_MS ?? 25000;
+    this.defaultTimeoutMs = options.timeoutMs ?? ENV.GEMINI_TIMEOUT_MS ?? 30000;
     this.defaultMaxOutputTokens =
-      options.maxOutputTokens ?? ENV.GEMINI_MAX_OUTPUT_TOKENS ?? 1200;
+      options.maxOutputTokens ?? ENV.GEMINI_MAX_OUTPUT_TOKENS ?? 2048;
   }
 
   private getClient(): GoogleGenAI {
@@ -151,9 +151,11 @@ export class GeminiProvider implements AIProvider {
     modelName: string,
     contents: Content[],
     config: Record<string, unknown>,
-    timeoutMs: number
+    timeoutMs: number,
+    options: { maxAttempts?: number; willFallbackOnFailure?: boolean } = {}
   ) {
-    const maxAttempts = 2;
+    const maxAttempts = options.maxAttempts ?? 2;
+    const willFallbackOnFailure = Boolean(options.willFallbackOnFailure);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -189,7 +191,7 @@ export class GeminiProvider implements AIProvider {
           attempt < maxAttempts && this.isTransientProviderFailure(err, safeMsg, status);
 
         if (canRetry) {
-          logger.warn('[GeminiProvider] Falha transitória na API Gemini, executando retry', {
+          logger.info('[GeminiProvider] Falha transitória na API Gemini, executando retry', {
             model: modelName,
             attempt,
             status: status || undefined,
@@ -199,11 +201,16 @@ export class GeminiProvider implements AIProvider {
           continue;
         }
 
-        logger.error('[GeminiProvider] Falha ao gerar resposta', {
+        const logPayload = {
           model: modelName,
           status: status || undefined,
           reason: safeMsg,
-        });
+        };
+        if (willFallbackOnFailure) {
+          logger.info('[GeminiProvider] Modelo primário indisponível; encaminhando para fallback', logPayload);
+        } else {
+          logger.error('[GeminiProvider] Falha ao gerar resposta', logPayload);
+        }
 
         if (status === 429 || /rate limit|quota|resource_exhausted/i.test(safeMsg)) {
           throw new AIProviderError(
@@ -248,7 +255,8 @@ export class GeminiProvider implements AIProvider {
     maxOutputTokens: number,
     timeoutMs: number,
     toolExecutions: AIToolExecutionTrace[],
-    seenSignatures: Map<string, number>
+    seenSignatures: Map<string, number>,
+    invokeOptions: { maxAttempts?: number; willFallbackOnFailure?: boolean } = {}
   ): Promise<AIGenerateResult> {
     const maxRounds = Math.min(Math.max(1, params.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS), 6);
     const maxCalls = Math.min(Math.max(1, params.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS), 10);
@@ -275,7 +283,8 @@ export class GeminiProvider implements AIProvider {
         modelName,
         contents,
         config,
-        perRoundTimeout
+        perRoundTimeout,
+        invokeOptions
       );
 
       accumulatedUsage = this.mergeUsage(accumulatedUsage, response.usageMetadata);
@@ -413,8 +422,10 @@ export class GeminiProvider implements AIProvider {
     const maxOutputTokens = params.maxOutputTokens ?? this.defaultMaxOutputTokens;
     const contents = this.buildContents(params);
 
-    const primaryTimeoutMs = this.fallbackModel
-      ? Math.max(8000, Math.floor(totalTimeoutMs * 0.65))
+    const hasFallback = Boolean(this.fallbackModel);
+    // Fail over rapidly when a fallback model is configured instead of blocking on slow retries
+    const primaryTimeoutMs = hasFallback
+      ? Math.min(12000, Math.max(8000, Math.floor(totalTimeoutMs * 0.5)))
       : totalTimeoutMs;
 
     const toolExecutions: AIToolExecutionTrace[] = [];
@@ -429,7 +440,11 @@ export class GeminiProvider implements AIProvider {
         maxOutputTokens,
         primaryTimeoutMs,
         toolExecutions,
-        seenSignatures
+        seenSignatures,
+        {
+          maxAttempts: hasFallback ? 1 : 2,
+          willFallbackOnFailure: hasFallback,
+        }
       );
     } catch (primaryErr: any) {
       const canFallback =
@@ -443,7 +458,7 @@ export class GeminiProvider implements AIProvider {
         throw primaryErr;
       }
 
-      logger.warn(
+      logger.info(
         '[GeminiProvider] Acionando modelo fallback após indisponibilidade temporária do modelo primário',
         {
           primaryModel: this.model,
@@ -453,7 +468,7 @@ export class GeminiProvider implements AIProvider {
         }
       );
 
-      const remainingTimeout = Math.max(8000, totalTimeoutMs - primaryTimeoutMs + 5000);
+      const fallbackTimeout = Math.max(15000, totalTimeoutMs);
       // Continues with the exact current `contents` so already-executed tools/proposals are never re-run
       return this.callModelWithToolLoop(
         client,
@@ -461,9 +476,13 @@ export class GeminiProvider implements AIProvider {
         contents,
         params,
         maxOutputTokens,
-        remainingTimeout,
+        fallbackTimeout,
         toolExecutions,
-        seenSignatures
+        seenSignatures,
+        {
+          maxAttempts: 2,
+          willFallbackOnFailure: false,
+        }
       );
     }
   }

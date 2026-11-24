@@ -8,25 +8,34 @@ import {
   Target,
   User,
   Clock,
-  CheckCircle2,
   CircleDot,
   Edit3,
   Trash2,
   Shield,
   History,
   Wrench,
-  Gamepad2,
   AlertCircle,
   X,
   Compass,
   Code2,
   ListChecks,
+  Bot,
 } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { Skeleton } from '../components/ui/Skeleton';
+import { Select } from '../components/ui/Select';
+import { Input } from '../components/ui/Input';
+import { Textarea } from '../components/ui/Textarea';
+import { Tabs } from '../components/ui/Tabs';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState } from '../components/ui/ErrorState';
+import { PageHeader } from '../components/ui/PageHeader';
+import { GameCover } from '../components/ui/GameCover';
+import { useToast } from '../components/ui/Toast';
 import { ApiService } from '../services/api';
 import {
   GameBuildItem,
@@ -36,11 +45,13 @@ import {
   NavTab,
   ProgressLogItem,
 } from '../types';
+import { formatHours } from '../utils/formatters';
 
 interface JourneysViewProps {
   selectedEntry: LibraryEntry | null;
   onSelectEntry: (entry: LibraryEntry | null) => void;
   onNavigate: (tab: NavTab) => void;
+  onOpenCompanion?: (context?: { gameId?: string | null; journeyId?: string | null }) => void;
 }
 
 interface KeyValueRow {
@@ -52,9 +63,10 @@ function recordToRows(obj: Record<string, unknown> | undefined): KeyValueRow[] {
   if (!obj || typeof obj !== 'object') return [];
   return Object.entries(obj).map(([key, val]) => ({
     key,
-    value: typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
-      ? String(val)
-      : JSON.stringify(val),
+    value:
+      typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
+        ? String(val)
+        : JSON.stringify(val),
   }));
 }
 
@@ -90,12 +102,21 @@ function rowsToRecord(rows: KeyValueRow[]): Record<string, unknown> {
 
 function formatJsonValue(val: unknown): string {
   if (val === null || val === undefined) return '—';
-  if (Array.isArray(val)) return val.map((v) => (typeof v === 'object' ? JSON.stringify(v) : String(v))).join(', ');
+  if (Array.isArray(val)) {
+    return val.map((v) => (typeof v === 'object' ? JSON.stringify(v) : String(v))).join(', ');
+  }
   if (typeof val === 'object') return JSON.stringify(val);
   return String(val);
 }
 
-export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: JourneysViewProps) {
+export function JourneysView({
+  selectedEntry,
+  onSelectEntry,
+  onNavigate,
+  onOpenCompanion,
+}: JourneysViewProps) {
+  const { showToast } = useToast();
+
   const [libraryEntries, setLibraryEntries] = useState<LibraryEntry[]>([]);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(true);
 
@@ -109,9 +130,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
 
   const [activeSubTab, setActiveSubTab] = useState<'timeline' | 'builds'>('timeline');
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Journey Form Modal State
   const [isJourneyModalOpen, setIsJourneyModalOpen] = useState(false);
   const [editingJourney, setEditingJourney] = useState<GameplayJourney | null>(null);
   const [jName, setJName] = useState('');
@@ -127,11 +146,9 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
   const [jFormError, setJFormError] = useState<string | null>(null);
   const [isSavingJourney, setIsSavingJourney] = useState(false);
 
-  // Delete Journey Confirmation
   const [deletingJourney, setDeletingJourney] = useState<GameplayJourney | null>(null);
   const [isDeletingJourney, setIsDeletingJourney] = useState(false);
 
-  // Progress Modal State
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
   const [editingProgress, setEditingProgress] = useState<ProgressLogItem | null>(null);
   const [pArea, setPArea] = useState('');
@@ -146,7 +163,6 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
   const [deletingProgress, setDeletingProgress] = useState<ProgressLogItem | null>(null);
   const [isDeletingProgress, setIsDeletingProgress] = useState(false);
 
-  // Build Modal State
   const [isBuildModalOpen, setIsBuildModalOpen] = useState(false);
   const [editingBuild, setEditingBuild] = useState<GameBuildItem | null>(null);
   const [bName, setBName] = useState('');
@@ -166,20 +182,14 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
 
   const selectedJourney = journeys.find((j) => j.id === selectedJourneyId) || journeys[0] || null;
 
-  useEffect(() => {
-    if (!feedback) return;
-    const t = setTimeout(() => setFeedback(null), 4000);
-    return () => clearTimeout(t);
-  }, [feedback]);
-
-  // Load user's library entries so user can switch games inside JourneysView
   const loadLibrary = useCallback(async () => {
     setIsLoadingLibrary(true);
     try {
       const res = await ApiService.getLibrary({ limit: 100, sort: 'recentlyUpdated' });
-      setLibraryEntries(res.data);
-      if (!selectedEntry && res.data.length > 0) {
-        onSelectEntry(res.data[0]);
+      const valid = (res.data || []).filter((e) => Boolean(e && e.id));
+      setLibraryEntries(valid);
+      if (!selectedEntry && valid.length > 0) {
+        onSelectEntry(valid[0]);
       }
     } catch (err: any) {
       if (err.status === 401) {
@@ -196,7 +206,6 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     loadLibrary();
   }, [loadLibrary]);
 
-  // Load journeys for currently selected LibraryEntry
   const loadJourneys = useCallback(async () => {
     if (!selectedEntry) {
       setJourneys([]);
@@ -208,11 +217,12 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     setError(null);
     try {
       const res = await ApiService.getJourneys({ userGameId: selectedEntry.id, limit: 50 });
-      setJourneys(res.data);
+      const list = (res.data || []).filter((j) => Boolean(j && j.id));
+      setJourneys(list);
       setSelectedJourneyId((prev) => {
-        if (prev && res.data.some((j) => j.id === prev)) return prev;
-        const active = res.data.find((j) => j.isActive);
-        return active?.id || res.data[0]?.id || null;
+        if (prev && list.some((j) => j.id === prev)) return prev;
+        const active = list.find((j) => j.isActive);
+        return active?.id || list[0]?.id || null;
       });
     } catch (err: any) {
       setError(err.message || 'Erro ao carregar jornadas deste jogo.');
@@ -225,7 +235,6 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     loadJourneys();
   }, [loadJourneys]);
 
-  // Load Progress Logs & Builds for selectedJourney
   const loadJourneyDetails = useCallback(async (journeyId: string | null) => {
     if (!journeyId) {
       setProgressLogs([]);
@@ -239,8 +248,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
         ApiService.getJourneyProgress(journeyId),
         ApiService.getJourneyBuilds(journeyId),
       ]);
-      setProgressLogs(logsData);
-      setBuilds(buildsData);
+      setProgressLogs((logsData || []).filter((l) => Boolean(l && l.id)));
+      setBuilds((buildsData || []).filter((b) => Boolean(b && b.id)));
     } catch (err: any) {
       setError(err.message || 'Erro ao carregar progresso e builds da jornada.');
     } finally {
@@ -251,10 +260,6 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
   useEffect(() => {
     loadJourneyDetails(selectedJourney?.id || null);
   }, [selectedJourney?.id, loadJourneyDetails]);
-
-  // ---------------------------------------------------------------------------
-  // Journey Handlers
-  // ---------------------------------------------------------------------------
 
   const openCreateJourneyModal = () => {
     setEditingJourney(null);
@@ -328,7 +333,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           status: jStatus,
           notes: jNotes.trim() || null,
         });
-        setFeedback(`Jornada "${updated.name}" atualizada.`);
+        showToast({ variant: 'success', message: `Jornada "${updated.name}" atualizada.` });
       } else {
         const created = await ApiService.createJourney({
           userGameId: selectedEntry.id,
@@ -344,7 +349,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           notes: jNotes.trim() || null,
         });
         setSelectedJourneyId(created.id);
-        setFeedback(`Jornada "${created.name}" criada com sucesso.`);
+        showToast({ variant: 'success', message: `Jornada "${created.name}" criada.` });
       }
 
       setIsJourneyModalOpen(false);
@@ -360,7 +365,10 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     try {
       const activated = await ApiService.activateJourney(journey.id);
       setSelectedJourneyId(activated.id);
-      setFeedback(`"${activated.name}" agora é a jornada ativa deste jogo.`);
+      showToast({
+        variant: 'success',
+        message: `"${activated.name}" definida como jornada ativa.`,
+      });
       await loadJourneys();
     } catch (err: any) {
       setError(err.message || 'Erro ao ativar jornada.');
@@ -377,7 +385,10 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
       if (selectedJourneyId === deletingJourney.id) {
         setSelectedJourneyId(null);
       }
-      setFeedback(`Jornada "${removedName}" e seus registros vinculados foram removidos.`);
+      showToast({
+        variant: 'success',
+        message: `Jornada "${removedName}" removida.`,
+      });
       await loadJourneys();
     } catch (err: any) {
       setError(err.message || 'Erro ao excluir jornada.');
@@ -386,17 +397,17 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // Progress Log Handlers
-  // ---------------------------------------------------------------------------
-
   const openCreateProgressModal = () => {
     setEditingProgress(null);
     setPArea(selectedJourney?.currentArea || '');
     setPQuest('');
     setPDescription('');
     setPPercent('');
-    setPLevel(selectedJourney?.currentLevel !== null && selectedJourney?.currentLevel !== undefined ? String(selectedJourney.currentLevel) : '');
+    setPLevel(
+      selectedJourney?.currentLevel !== null && selectedJourney?.currentLevel !== undefined
+        ? String(selectedJourney.currentLevel)
+        : ''
+    );
     setPHours(String(selectedJourney?.playtimeHours ?? 0));
     setPError(null);
     setIsProgressModalOpen(true);
@@ -420,7 +431,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     setPError(null);
 
     if (!pDescription.trim()) {
-      setPError('Descreva o marco ou evento ocorrido neste checkpoint.');
+      setPError('Descreva o marco ou evento ocorrido neste ponto da jornada.');
       return;
     }
 
@@ -461,7 +472,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           playerLevelAtPoint: parsedLevel,
           hoursPlayedAtPoint: parsedHours,
         });
-        setFeedback('Registro de progresso atualizado.');
+        showToast({ variant: 'success', message: 'Registro de progresso atualizado.' });
       } else {
         await ApiService.createProgressLog(selectedJourney.id, {
           areaName: pArea.trim() || null,
@@ -471,7 +482,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           playerLevelAtPoint: parsedLevel,
           hoursPlayedAtPoint: parsedHours,
         });
-        setFeedback('Novo marco adicionado à linha do tempo.');
+        showToast({ variant: 'success', message: 'Novo marco adicionado à linha do tempo.' });
       }
 
       setIsProgressModalOpen(false);
@@ -489,7 +500,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     try {
       await ApiService.deleteProgressLog(deletingProgress.id);
       setDeletingProgress(null);
-      setFeedback('Marco de progresso removido.');
+      showToast({ variant: 'success', message: 'Marco de progresso removido.' });
       await Promise.all([loadJourneyDetails(selectedJourney.id), loadJourneys()]);
     } catch (err: any) {
       setError(err.message || 'Erro ao excluir marco de progresso.');
@@ -497,10 +508,6 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
       setIsDeletingProgress(false);
     }
   };
-
-  // ---------------------------------------------------------------------------
-  // Build Handlers
-  // ---------------------------------------------------------------------------
 
   const openCreateBuildModal = () => {
     setEditingBuild(null);
@@ -511,8 +518,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     setBJsonMode(false);
     setBAttrRows([{ key: '', value: '' }]);
     setBEquipRows([{ key: '', value: '' }]);
-    setBAttrJson('{\n  "Vigor": 40,\n  "Intelligence": 60\n}');
-    setBEquipJson('{\n  "weapon": "Cajado Principal"\n}');
+    setBAttrJson('{\n  "Atributo Principal": 30\n}');
+    setBEquipJson('{\n  "Slot Principal": "Equipamento"\n}');
     setBError(null);
     setIsBuildModalOpen(true);
   };
@@ -603,7 +610,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           equipment: equipmentPayload,
           notes: bNotes.trim() || null,
         });
-        setFeedback(`Build "${bName.trim()}" atualizada.`);
+        showToast({ variant: 'success', message: `Build "${bName.trim()}" atualizada.` });
       } else {
         await ApiService.createBuild(selectedJourney.id, {
           name: bName.trim(),
@@ -613,7 +620,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
           equipment: equipmentPayload,
           notes: bNotes.trim() || null,
         });
-        setFeedback(`Build "${bName.trim()}" salva na jornada.`);
+        showToast({ variant: 'success', message: `Build "${bName.trim()}" salva.` });
       }
 
       setIsBuildModalOpen(false);
@@ -631,7 +638,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     try {
       await ApiService.deleteBuild(deletingBuild.id);
       setDeletingBuild(null);
-      setFeedback('Build removida da jornada.');
+      showToast({ variant: 'success', message: 'Build removida da jornada.' });
       await Promise.all([loadJourneyDetails(selectedJourney.id), loadJourneys()]);
     } catch (err: any) {
       setError(err.message || 'Erro ao excluir build.');
@@ -640,15 +647,11 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // Empty / Loading States
-  // ---------------------------------------------------------------------------
-
   if (isLoadingLibrary && libraryEntries.length === 0) {
     return (
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
         <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-36 w-full rounded-2xl" />
+        <Skeleton className="h-32 w-full rounded-2xl" />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Skeleton className="h-64 rounded-2xl" />
           <Skeleton className="h-64 lg:col-span-2 rounded-2xl" />
@@ -659,186 +662,155 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
 
   if (!isLoadingLibrary && libraryEntries.length === 0) {
     return (
-      <div className="max-w-xl mx-auto py-16 text-center space-y-6">
-        <div className="w-16 h-16 rounded-2xl bg-violet-950/80 border border-violet-500/40 flex items-center justify-center mx-auto text-violet-400">
-          <Compass className="w-8 h-8" />
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-white tracking-tight">
-            Adicione um jogo antes de iniciar uma jornada
-          </h2>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            Suas jornadas de gameplay, marcos de progresso e builds ficam vinculados aos títulos da sua Biblioteca Pessoal.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <Button variant="primary" onClick={() => onNavigate('explore')}>
-            Explorar Catálogo IGDB
-          </Button>
-          <Button variant="outline" onClick={() => onNavigate('library')}>
-            Ir para Biblioteca
-          </Button>
-        </div>
+      <div className="max-w-lg mx-auto py-12">
+        <EmptyState
+          icon={<Compass className="w-7 h-7" />}
+          title="Adicione um jogo antes de iniciar uma jornada"
+          description="Suas jornadas de gameplay, marcos cronológicos e builds ficam vinculados aos títulos da sua Biblioteca Pessoal."
+          action={
+            <Button variant="primary" onClick={() => onNavigate('explore')}>
+              Explorar Catálogo
+            </Button>
+          }
+          secondaryAction={
+            <Button variant="outline" onClick={() => onNavigate('library')}>
+              Ir para Biblioteca
+            </Button>
+          }
+        />
       </div>
     );
   }
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Top Breadcrumb & Game Selector */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-3 min-w-0">
+      <PageHeader
+        title="Jornadas de Gameplay"
+        subtitle="Acompanhe campanhas, marcos cronológicos e builds adaptáveis a qualquer gênero."
+        backAction={
           <Button
             variant="outline"
             size="sm"
             leftIcon={<ArrowLeft className="w-4 h-4" />}
             onClick={() => onNavigate('library')}
-            className="shrink-0"
           >
             Biblioteca
           </Button>
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight truncate">
-              Jornadas de Gameplay
-            </h1>
-            <p className="text-xs text-slate-400 truncate">
-              Acompanhe múltiplas campanhas, marcos cronológicos e builds personalizadas.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
-          <select
-            value={selectedEntry?.id || ''}
-            onChange={(e) => {
-              const found = libraryEntries.find((item) => item.id === e.target.value) || null;
-              onSelectEntry(found);
-            }}
-            aria-label="Selecionar jogo da biblioteca"
-            className="bg-slate-950 text-slate-100 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-violet-500 max-w-full sm:max-w-[240px]"
-          >
-            {libraryEntries.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.game.title}
-              </option>
-            ))}
-          </select>
-
-          {selectedEntry && (
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="w-4 h-4" />}
-              onClick={openCreateJourneyModal}
+        }
+        actions={
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <Select
+              aria-label="Selecionar jogo da biblioteca"
+              value={selectedEntry?.id || ''}
+              onChange={(e) => {
+                const found = libraryEntries.find((item) => item.id === e.target.value) || null;
+                onSelectEntry(found);
+              }}
+              className="text-xs sm:w-56"
             >
-              Nova Jornada
-            </Button>
-          )}
-        </div>
-      </div>
+              {libraryEntries.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.game.title}
+                </option>
+              ))}
+            </Select>
 
-      {/* Feedback Banner */}
-      {feedback && (
-        <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 flex items-center justify-between gap-3 text-xs text-emerald-200">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>{feedback}</span>
+            {selectedEntry && (
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={<Plus className="w-4 h-4" />}
+                onClick={openCreateJourneyModal}
+              >
+                Nova Jornada
+              </Button>
+            )}
           </div>
-          <button type="button" onClick={() => setFeedback(null)} className="text-emerald-400 hover:text-white">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+        }
+      />
 
-      {/* Error Banner */}
-      {error && (
-        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-500/40 flex items-center justify-between gap-3 text-xs text-rose-200">
-          <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>{error}</span>
-          </div>
-          <button type="button" onClick={() => setError(null)} className="text-rose-400 hover:text-white">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {error && <ErrorState message={error} onRetry={loadJourneys} />}
 
-      {/* Game Hero Summary */}
+      {/* Game Summary Card */}
       {selectedEntry && (
-        <Card glow="violet" className="bg-slate-900/80 border-slate-800 p-4 sm:p-5">
+        <Card glow="violet" className="p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
-            <div className="w-20 sm:w-24 aspect-[3/4] rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
-              {selectedEntry.game.coverUrl ? (
-                <img
-                  src={selectedEntry.game.coverUrl}
-                  alt={selectedEntry.game.title}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-600">
-                  <Gamepad2 className="w-7 h-7" />
-                </div>
-              )}
-            </div>
+            <GameCover
+              src={selectedEntry.game.coverUrl}
+              alt={selectedEntry.game.title}
+              className="w-20 sm:w-24 aspect-[3/4] rounded-xl border border-slate-800 shrink-0"
+              iconSize="md"
+            />
 
             <div className="flex-1 min-w-0 space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
                   {selectedEntry.game.title}
                 </h2>
-                <Badge variant="ai" size="sm">
+                <Badge variant="ai" size="sm" className="tabular-nums">
                   {journeys.length} {journeys.length === 1 ? 'Jornada' : 'Jornadas'}
                 </Badge>
               </div>
-              <p className="text-xs text-slate-400 line-clamp-2">
-                {selectedEntry.game.summary || 'Gerencie suas campanhas, personagens e builds para este título.'}
+              <p className="text-xs sm:text-sm text-slate-400 line-clamp-2">
+                {selectedEntry.game.summary || 'Gerencie campanhas, objetivos e builds para este jogo.'}
               </p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+              <div className="text-xs text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1 tabular-nums">
                 <span>{selectedEntry.game.developer || 'Estúdio não informado'}</span>
-                <span>{selectedEntry.game.genres.slice(0, 3).join(' · ')}</span>
-                <span className="text-blue-300 font-medium">{selectedEntry.hoursPlayed}h na biblioteca</span>
+                {selectedEntry.game.genres.length > 0 && (
+                  <span>· {selectedEntry.game.genres.slice(0, 3).join(', ')}</span>
+                )}
+                <span className="text-blue-300 font-semibold">
+                  · {formatHours(selectedEntry.hoursPlayed)} na biblioteca
+                </span>
               </div>
             </div>
           </div>
         </Card>
       )}
 
-      {/* Journeys Switcher Strip */}
       {isLoadingJourneys ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <Skeleton className="h-32 rounded-2xl" />
           <Skeleton className="h-32 rounded-2xl" />
         </div>
       ) : journeys.length === 0 ? (
-        <div className="py-14 px-6 text-center rounded-2xl bg-slate-900/50 border border-slate-800 space-y-4">
-          <div className="w-14 h-14 rounded-2xl bg-violet-950/60 border border-violet-500/30 flex items-center justify-center mx-auto text-violet-400">
-            <Swords className="w-7 h-7" />
-          </div>
-          <div className="max-w-md mx-auto space-y-1.5">
-            <h3 className="text-base font-bold text-white">Nenhuma jornada criada ainda</h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Crie sua primeira jornada para registrar personagem, classe, região atual, objetivo, linha do tempo e builds.
-            </p>
-          </div>
-          <Button variant="primary" size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={openCreateJourneyModal}>
-            Criar Primeira Jornada
-          </Button>
-        </div>
+        <EmptyState
+          icon={<Swords className="w-7 h-7" />}
+          title="Nenhuma jornada criada ainda"
+          description="Crie sua primeira jornada para registrar personagem, classe ou estilo de jogo, região atual, linha do tempo e builds."
+          action={
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<Plus className="w-4 h-4" />}
+              onClick={openCreateJourneyModal}
+            >
+              Criar Primeira Jornada
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-6">
-          {/* Journey Cards Selector */}
+          {/* Journey Selector Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {journeys.map((journey) => {
               const isSelected = selectedJourney?.id === journey.id;
               return (
                 <div
                   key={journey.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedJourneyId(journey.id)}
-                  className={`rounded-2xl p-4 border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedJourneyId(journey.id);
+                    }
+                  }}
+                  className={`rounded-2xl p-4 border transition-colors cursor-pointer flex flex-col justify-between gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 ${
                     isSelected
-                      ? 'bg-gradient-to-br from-violet-950/50 via-slate-900 to-indigo-950/40 border-violet-500/60 shadow-[0_0_20px_rgba(139,92,246,0.18)]'
-                      : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      ? 'bg-violet-950/35 border-violet-500/60'
+                      : 'bg-[var(--bg-surface)] border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="space-y-2">
@@ -846,7 +818,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                       <div className="flex flex-wrap items-center gap-1.5">
                         {journey.isActive && (
                           <Badge variant="success" size="sm">
-                            <CircleDot className="w-3 h-3" />
+                            <CircleDot className="w-3 h-3" aria-hidden="true" />
                             Ativa
                           </Badge>
                         )}
@@ -854,23 +826,23 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                           {journey.isCompleted ? 'Concluída' : 'Em andamento'}
                         </Badge>
                       </div>
-                      <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
-                        {journey.playtimeHours}h
+                      <span className="text-xs text-slate-400 tabular-nums shrink-0">
+                        {formatHours(journey.playtimeHours)}
                       </span>
                     </div>
 
                     <h3 className="font-bold text-sm text-white line-clamp-1">{journey.name}</h3>
 
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
                       {journey.characterName && (
-                        <span className="flex items-center gap-1 text-slate-300">
-                          <User className="w-3.5 h-3.5 text-violet-400" />
+                        <span className="flex items-center gap-1">
+                          <User className="w-3.5 h-3.5 text-violet-400" aria-hidden="true" />
                           {journey.characterName}
                         </span>
                       )}
                       {journey.characterClass && (
-                        <span className="flex items-center gap-1">
-                          <Shield className="w-3.5 h-3.5 text-blue-400" />
+                        <span className="flex items-center gap-1 text-slate-400">
+                          <Shield className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
                           {journey.characterClass}
                         </span>
                       )}
@@ -882,15 +854,15 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                     </div>
 
                     {journey.currentArea && (
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate">
-                        <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <div className="flex items-center gap-1.5 text-xs text-slate-400 truncate">
+                        <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" aria-hidden="true" />
                         <span className="truncate">{journey.currentArea}</span>
                       </div>
                     )}
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-800/80">
-                    <div className="text-[11px] text-slate-500 tabular-nums">
+                    <div className="text-[11px] text-slate-400 tabular-nums">
                       {journey.progressLogsCount ?? 0} marcos · {journey.buildsCount ?? 0} builds
                     </div>
                     <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -898,7 +870,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                         <Button
                           variant="outline"
                           size="sm"
-                          className="text-[11px] px-2.5 py-1"
+                          className="text-[11px] px-2.5 min-h-[32px] py-1"
                           onClick={() => handleActivateJourney(journey)}
                         >
                           Ativar
@@ -907,7 +879,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                       <Button
                         variant="secondary"
                         size="sm"
-                        className="p-1.5"
+                        className="px-2 min-h-[32px] py-1"
+                        aria-label={`Editar jornada ${journey.name}`}
                         title="Editar jornada"
                         onClick={() => openEditJourneyModal(journey)}
                       >
@@ -916,7 +889,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                       <Button
                         variant="outline"
                         size="sm"
-                        className="p-1.5 text-rose-400 hover:text-rose-300 hover:border-rose-500/50"
+                        className="px-2 min-h-[32px] py-1 text-rose-300 hover:border-rose-500/50"
+                        aria-label={`Excluir jornada ${journey.name}`}
                         title="Excluir jornada"
                         onClick={() => setDeletingJourney(journey)}
                       >
@@ -929,15 +903,14 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
             })}
           </div>
 
-          {/* Selected Journey Detail + Progress & Builds Workspace */}
+          {/* Selected Journey Detail Workspace */}
           {selectedJourney && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left Column: Selected Journey Overview Card */}
-              <Card className="lg:col-span-4 bg-slate-900/80 border-slate-800 p-5 space-y-4">
+              <Card className="lg:col-span-4 p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                      {selectedJourney.isActive && <Badge variant="success" size="sm">Jornada Ativa</Badge>}
+                      {selectedJourney.isActive && <Badge variant="success" size="sm">Ativa</Badge>}
                       <Badge variant={selectedJourney.isCompleted ? 'completed' : 'playing'} size="sm">
                         {selectedJourney.isCompleted ? 'Concluída' : 'Em andamento'}
                       </Badge>
@@ -955,111 +928,126 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                   </Button>
                 </div>
 
-                <div className="space-y-3 text-xs pt-2 border-t border-slate-800/80">
+                <dl className="space-y-3 text-xs pt-2 border-t border-slate-800/80">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <User className="w-3.5 h-3.5 text-violet-400" /> Personagem
-                    </span>
-                    <span className="text-slate-100 font-semibold text-right">
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-violet-400" aria-hidden="true" />
+                      <span>Personagem</span>
+                    </dt>
+                    <dd className="text-slate-100 font-semibold text-right">
                       {selectedJourney.characterName || 'Não definido'}
-                    </span>
+                    </dd>
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-blue-400" /> Classe / Arquétipo
-                    </span>
-                    <span className="text-slate-100 font-semibold text-right">
-                      {selectedJourney.characterClass || 'Livre / Sem classe'}
-                    </span>
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+                      <span>Classe / Estilo</span>
+                    </dt>
+                    <dd className="text-slate-100 font-semibold text-right">
+                      {selectedJourney.characterClass || 'Livre'}
+                    </dd>
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Nível Atual
-                    </span>
-                    <span className="text-amber-300 font-bold tabular-nums">
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+                      <span>Nível Atual</span>
+                    </dt>
+                    <dd className="text-amber-300 font-bold tabular-nums">
                       {selectedJourney.currentLevel !== null ? selectedJourney.currentLevel : '—'}
-                    </span>
+                    </dd>
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-cyan-400" /> Tempo Jogado
-                    </span>
-                    <span className="text-slate-100 font-semibold tabular-nums">
-                      {selectedJourney.playtimeHours}h
-                    </span>
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
+                      <span>Tempo Jogado</span>
+                    </dt>
+                    <dd className="text-slate-100 font-semibold tabular-nums">
+                      {formatHours(selectedJourney.playtimeHours)}
+                    </dd>
                   </div>
 
                   <div className="pt-2 border-t border-slate-800/80 space-y-1">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-emerald-400" /> Região Atual
-                    </span>
-                    <p className="text-slate-200 font-medium">
-                      {selectedJourney.currentArea || 'Região não informada'}
-                    </p>
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                      <span>Região / Capítulo Atual</span>
+                    </dt>
+                    <dd className="text-slate-100 font-medium">
+                      {selectedJourney.currentArea || 'Não informado'}
+                    </dd>
                   </div>
 
                   <div className="space-y-1">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Target className="w-3.5 h-3.5 text-rose-400" /> Missão / Objetivo Atual
-                    </span>
-                    <p className="text-slate-200 leading-relaxed">
+                    <dt className="text-slate-400 flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+                      <span>Objetivo Atual</span>
+                    </dt>
+                    <dd className="text-slate-200 leading-relaxed">
                       {selectedJourney.currentObjective || 'Nenhum objetivo registrado no momento.'}
-                    </p>
+                    </dd>
                   </div>
 
                   {selectedJourney.notes && (
-                    <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-300 italic leading-relaxed">
+                    <div className="p-3 rounded-xl bg-[var(--bg-inset)] border border-slate-800 text-slate-300 italic leading-relaxed">
                       &ldquo;{selectedJourney.notes}&rdquo;
                     </div>
                   )}
-                </div>
+                </dl>
 
-                {!selectedJourney.isActive && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => handleActivateJourney(selectedJourney)}
-                  >
-                    Definir como Jornada Ativa
-                  </Button>
-                )}
+                <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                  {onOpenCompanion && selectedEntry && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      leftIcon={<Bot className="w-4 h-4" />}
+                      onClick={() =>
+                        onOpenCompanion({
+                          gameId: selectedEntry.gameId,
+                          journeyId: selectedJourney.id,
+                        })
+                      }
+                    >
+                      Consultar Companion nesta Jornada
+                    </Button>
+                  )}
+
+                  {!selectedJourney.isActive && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => handleActivateJourney(selectedJourney)}
+                    >
+                      Definir como Jornada Ativa
+                    </Button>
+                  )}
+                </div>
               </Card>
 
-              {/* Right Column: Progress Timeline & Builds Tabs */}
               <div className="lg:col-span-8 space-y-4 min-w-0">
-                {/* Sub-navigation Tabs + Action CTA */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-                  <div className="flex items-center gap-2 overflow-x-auto">
-                    <button
-                      type="button"
-                      onClick={() => setActiveSubTab('timeline')}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
-                        activeSubTab === 'timeline'
-                          ? 'bg-violet-600 text-white shadow-sm shadow-violet-900/40'
-                          : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                      }`}
-                    >
-                      <History className="w-4 h-4" />
-                      <span>Linha do Tempo ({progressLogs.length})</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveSubTab('builds')}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
-                        activeSubTab === 'builds'
-                          ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-900/40'
-                          : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                      }`}
-                    >
-                      <Wrench className="w-4 h-4" />
-                      <span>Builds ({builds.length})</span>
-                    </button>
-                  </div>
+                <Card className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <Tabs
+                    activeId={activeSubTab}
+                    onChange={setActiveSubTab}
+                    ariaLabel="Seções da jornada"
+                    items={[
+                      {
+                        id: 'timeline',
+                        label: 'Linha do Tempo',
+                        icon: <History className="w-4 h-4" />,
+                        count: progressLogs.length,
+                      },
+                      {
+                        id: 'builds',
+                        label: 'Builds',
+                        icon: <Wrench className="w-4 h-4" />,
+                        count: builds.length,
+                      },
+                    ]}
+                  />
 
                   {activeSubTab === 'timeline' ? (
                     <Button
@@ -1080,9 +1068,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                       Nova Build
                     </Button>
                   )}
-                </div>
+                </Card>
 
-                {/* Tab Content */}
                 {isLoadingDetails ? (
                   <div className="space-y-3">
                     <Skeleton className="h-28 w-full rounded-2xl" />
@@ -1090,42 +1077,52 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                   </div>
                 ) : activeSubTab === 'timeline' ? (
                   progressLogs.length === 0 ? (
-                    <div className="p-10 text-center rounded-2xl bg-slate-900/50 border border-slate-800 space-y-3">
-                      <History className="w-8 h-8 text-slate-500 mx-auto" />
-                      <h4 className="text-sm font-bold text-white">Nenhum marco registrado ainda</h4>
-                      <p className="text-xs text-slate-400 max-w-md mx-auto">
-                        Registre chefes derrotados, áreas exploradas ou missões concluídas em ordem cronológica.
-                      </p>
-                      <Button variant="secondary" size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={openCreateProgressModal}>
-                        Adicionar Primeiro Marco
-                      </Button>
-                    </div>
+                    <EmptyState
+                      icon={<History className="w-6 h-6" />}
+                      title="Nenhum marco registrado ainda"
+                      description="Registre chefes derrotados, áreas exploradas, decisões ou missões concluídas em ordem cronológica."
+                      action={
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          leftIcon={<Plus className="w-4 h-4" />}
+                          onClick={openCreateProgressModal}
+                        >
+                          Adicionar Primeiro Marco
+                        </Button>
+                      }
+                    />
                   ) : (
-                    <div className="relative pl-6 sm:pl-8 space-y-4 before:content-[''] before:absolute before:left-2.5 sm:before:left-3.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-gradient-to-b before:from-violet-500/70 before:via-indigo-500/50 before:to-slate-800">
+                    <div className="relative pl-6 sm:pl-8 space-y-4 before:content-[''] before:absolute before:left-2.5 sm:before:left-3.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-gradient-to-b before:from-violet-500/70 before:via-indigo-500/40 before:to-slate-800">
                       {progressLogs.map((log, idx) => (
                         <div key={log.id} className="relative">
-                          <span className="absolute -left-[21px] sm:-left-[25px] top-4 w-3.5 h-3.5 rounded-full bg-violet-500 ring-4 ring-slate-950 shadow-[0_0_10px_rgba(139,92,246,0.6)]" />
+                          <span
+                            aria-hidden="true"
+                            className="absolute -left-[21px] sm:-left-[25px] top-4 w-3.5 h-3.5 rounded-full bg-violet-500 ring-4 ring-[var(--bg-canvas)]"
+                          />
 
-                          <Card className="bg-slate-900/80 border-slate-800 p-4 space-y-2.5">
+                          <Card className="p-4 space-y-2.5">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-violet-950/70 text-violet-300 border border-violet-700/40 tabular-nums">
+                                <Badge variant="ai" size="sm" className="tabular-nums">
                                   Marco #{idx + 1}
-                                </span>
+                                </Badge>
                                 {log.areaName && (
                                   <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" /> {log.areaName}
+                                    <MapPin className="w-3 h-3" aria-hidden="true" />
+                                    {log.areaName}
                                   </span>
                                 )}
                                 {log.questName && (
                                   <span className="text-xs font-semibold text-blue-300 flex items-center gap-1">
-                                    <Target className="w-3 h-3" /> {log.questName}
+                                    <Target className="w-3 h-3" aria-hidden="true" />
+                                    {log.questName}
                                   </span>
                                 )}
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[11px] text-slate-500 tabular-nums">
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[11px] text-slate-400 tabular-nums mr-1">
                                   {new Date(log.createdAt).toLocaleString('pt-BR', {
                                     day: '2-digit',
                                     month: '2-digit',
@@ -1137,7 +1134,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                                 <button
                                   type="button"
                                   onClick={() => openEditProgressModal(log)}
-                                  className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
+                                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                                  aria-label="Editar marco de progresso"
                                   title="Editar registro"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
@@ -1145,7 +1143,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                                 <button
                                   type="button"
                                   onClick={() => setDeletingProgress(log)}
-                                  className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-rose-950/40"
+                                  className="p-1.5 text-slate-400 hover:text-rose-300 rounded-lg hover:bg-rose-950/40 cursor-pointer"
+                                  aria-label="Excluir marco de progresso"
                                   title="Excluir registro"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1157,41 +1156,56 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                               {log.description}
                             </p>
 
-                            <div className="flex flex-wrap items-center gap-4 pt-1 text-[11px] text-slate-400 tabular-nums">
-                              {log.playerLevelAtPoint !== null && (
-                                <span>Nível: <strong className="text-amber-300">{log.playerLevelAtPoint}</strong></span>
-                              )}
-                              {log.hoursPlayedAtPoint > 0 && (
-                                <span>Horas: <strong className="text-slate-200">{log.hoursPlayedAtPoint}h</strong></span>
-                              )}
-                              {log.completionPercent !== null && (
-                                <div className="flex items-center gap-2 flex-1 min-w-[140px] max-w-xs">
-                                  <span>Progresso: <strong className="text-violet-300">{log.completionPercent}%</strong></span>
-                                  <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                                    <div
-                                      className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full"
-                                      style={{ width: `${log.completionPercent}%` }}
-                                    />
+                            {(log.playerLevelAtPoint !== null ||
+                              log.hoursPlayedAtPoint > 0 ||
+                              log.completionPercent !== null) && (
+                              <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-400 tabular-nums">
+                                {log.playerLevelAtPoint !== null && (
+                                  <span>
+                                    Nível: <strong className="text-amber-300">{log.playerLevelAtPoint}</strong>
+                                  </span>
+                                )}
+                                {log.hoursPlayedAtPoint > 0 && (
+                                  <span>
+                                    Horas: <strong className="text-slate-200">{formatHours(log.hoursPlayedAtPoint)}</strong>
+                                  </span>
+                                )}
+                                {log.completionPercent !== null && (
+                                  <div className="flex items-center gap-2 flex-1 min-w-[140px] max-w-xs">
+                                    <span>
+                                      Progresso: <strong className="text-violet-300">{log.completionPercent}%</strong>
+                                    </span>
+                                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full"
+                                        style={{ width: `${Math.min(100, log.completionPercent)}%` }}
+                                      />
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                            </div>
+                                )}
+                              </div>
+                            )}
                           </Card>
                         </div>
                       ))}
                     </div>
                   )
                 ) : builds.length === 0 ? (
-                  <div className="p-10 text-center rounded-2xl bg-slate-900/50 border border-slate-800 space-y-3">
-                    <Wrench className="w-8 h-8 text-slate-500 mx-auto" />
-                    <h4 className="text-sm font-bold text-white">Nenhuma build cadastrada nesta jornada</h4>
-                    <p className="text-xs text-slate-400 max-w-md mx-auto">
-                      Salve distribuições de atributos, armas, magias, loadouts ou táticas para qualquer estilo de jogo.
-                    </p>
-                    <Button variant="secondary" size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={openCreateBuildModal}>
-                      Criar Primeira Build
-                    </Button>
-                  </div>
+                  <EmptyState
+                    icon={<Wrench className="w-6 h-6" />}
+                    title="Nenhuma build cadastrada nesta jornada"
+                    description="Salve distribuições de atributos, armas, habilidades, decks, loadouts ou táticas para qualquer estilo de jogo."
+                    action={
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        leftIcon={<Plus className="w-4 h-4" />}
+                        onClick={openCreateBuildModal}
+                      >
+                        Criar Primeira Build
+                      </Button>
+                    }
+                  />
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {builds.map((build) => {
@@ -1199,22 +1213,23 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                       const equipEntries = Object.entries(build.equipment || {});
 
                       return (
-                        <Card key={build.id} glow="blue" className="bg-slate-900/80 border-slate-800 p-4 flex flex-col justify-between gap-4">
+                        <Card key={build.id} glow="blue" className="p-4 flex flex-col justify-between gap-4">
                           <div className="space-y-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <h4 className="font-bold text-base text-white break-words">{build.name}</h4>
                                 {build.playstyle && (
-                                  <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded bg-indigo-950/70 text-indigo-300 border border-indigo-700/40">
+                                  <Badge variant="info" size="sm" className="mt-1.5">
                                     {build.playstyle}
-                                  </span>
+                                  </Badge>
                                 )}
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => openEditBuildModal(build)}
-                                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+                                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                                  aria-label={`Editar build ${build.name}`}
                                   title="Editar build"
                                 >
                                   <Edit3 className="w-4 h-4" />
@@ -1222,7 +1237,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                                 <button
                                   type="button"
                                   onClick={() => setDeletingBuild(build)}
-                                  className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-rose-950/40"
+                                  className="p-1.5 text-slate-400 hover:text-rose-300 rounded-lg hover:bg-rose-950/40 cursor-pointer"
+                                  aria-label={`Excluir build ${build.name}`}
                                   title="Excluir build"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -1236,14 +1252,14 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
 
                             {attrEntries.length > 0 && (
                               <div className="space-y-1.5">
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                  Atributos
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                  Atributos & Parâmetros
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5">
                                   {attrEntries.map(([key, val]) => (
                                     <div
                                       key={key}
-                                      className="px-2.5 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800/90 flex items-center justify-between gap-2 text-xs"
+                                      className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-inset)] border border-slate-800/90 flex items-center justify-between gap-2 text-xs"
                                     >
                                       <span className="text-slate-400 truncate">{key}</span>
                                       <span className="text-violet-300 font-bold tabular-nums shrink-0">
@@ -1257,16 +1273,16 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
 
                             {equipEntries.length > 0 && (
                               <div className="space-y-1.5">
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                                   Equipamentos & Loadout
                                 </div>
                                 <div className="space-y-1">
                                   {equipEntries.map(([key, val]) => (
                                     <div
                                       key={key}
-                                      className="px-2.5 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800/90 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1"
+                                      className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-inset)] border border-slate-800/90 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1"
                                     >
-                                      <span className="text-slate-400 font-medium">{key}:</span>
+                                      <span className="text-slate-400 font-medium">{key}</span>
                                       <span className="text-blue-200 break-words sm:text-right">
                                         {formatJsonValue(val)}
                                       </span>
@@ -1277,7 +1293,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                             )}
 
                             {build.notes && (
-                              <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 italic">
+                              <div className="p-2.5 rounded-xl bg-[var(--bg-inset)] border border-slate-800/80 text-[11px] text-slate-400 italic">
                                 &ldquo;{build.notes}&rdquo;
                               </div>
                             )}
@@ -1303,131 +1319,99 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
       >
         <form onSubmit={handleSaveJourney} className="space-y-4">
           {jFormError && (
-            <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div
+              role="alert"
+              className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
               <span>{jFormError}</span>
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Nome da Jornada *
-              </label>
-              <input
-                type="text"
+              <Input
+                label="Nome da Jornada"
                 required
                 maxLength={120}
                 value={jName}
                 onChange={(e) => setJName(e.target.value)}
-                placeholder="Ex: 1ª Run - Mago Puro, Modo Hardcore, Coop com Amigos..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
+                placeholder="Ex: 1ª Campanha, Modo Difícil, Coop com Amigos..."
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Nome do Personagem
-              </label>
-              <input
-                type="text"
-                maxLength={100}
-                value={jCharName}
-                onChange={(e) => setJCharName(e.target.value)}
-                placeholder="Opcional (ex: Aurelia)"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Nome do Personagem / Perfil"
+              maxLength={100}
+              value={jCharName}
+              onChange={(e) => setJCharName(e.target.value)}
+              placeholder="Opcional"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Classe / Arquétipo
-              </label>
-              <input
-                type="text"
-                maxLength={100}
-                value={jCharClass}
-                onChange={(e) => setJCharClass(e.target.value)}
-                placeholder="Opcional (ex: Samurai, Netrunner)"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Classe / Arquétipo / Estilo"
+              maxLength={100}
+              value={jCharClass}
+              onChange={(e) => setJCharClass(e.target.value)}
+              placeholder="Opcional"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Nível Atual</label>
-              <input
-                type="number"
-                min={0}
-                value={jLevel}
-                onChange={(e) => setJLevel(e.target.value)}
-                placeholder="Opcional"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 tabular-nums"
-              />
-            </div>
+            <Input
+              label="Nível Atual"
+              type="number"
+              min={0}
+              value={jLevel}
+              onChange={(e) => setJLevel(e.target.value)}
+              placeholder="Opcional"
+              className="tabular-nums"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Horas na Jornada
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={jHours}
-                onChange={(e) => setJHours(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500 tabular-nums"
-              />
-            </div>
+            <Input
+              label="Horas na Jornada"
+              type="number"
+              min={0}
+              step={0.5}
+              value={jHours}
+              onChange={(e) => setJHours(e.target.value)}
+              className="tabular-nums"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Região Atual</label>
-              <input
-                type="text"
-                maxLength={150}
-                value={jArea}
-                onChange={(e) => setJArea(e.target.value)}
-                placeholder="Ex: Liurnia dos Lagos"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Região / Capítulo Atual"
+              maxLength={150}
+              value={jArea}
+              onChange={(e) => setJArea(e.target.value)}
+              placeholder="Opcional"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Estado</label>
-              <select
-                value={jStatus}
-                onChange={(e) => setJStatus(e.target.value as JourneyStatus)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500"
-              >
-                <option value="IN_PROGRESS">Em andamento</option>
-                <option value="COMPLETED">Concluída</option>
-              </select>
-            </div>
+            <Select
+              label="Estado"
+              value={jStatus}
+              onChange={(e) => setJStatus(e.target.value as JourneyStatus)}
+            >
+              <option value="IN_PROGRESS">Em andamento</option>
+              <option value="COMPLETED">Concluída</option>
+            </Select>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Missão ou Objetivo Atual
-              </label>
-              <input
-                type="text"
+              <Input
+                label="Missão ou Objetivo Atual"
                 maxLength={300}
                 value={jObjective}
                 onChange={(e) => setJObjective(e.target.value)}
-                placeholder="Ex: Encontrar a Chave Pedrilhante da Academia"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
+                placeholder="Opcional"
               />
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Notas da Jornada
-              </label>
-              <textarea
+              <Textarea
+                label="Notas da Jornada"
                 rows={3}
                 maxLength={2000}
+                showCount
                 value={jNotes}
                 onChange={(e) => setJNotes(e.target.value)}
                 placeholder="Regras pessoais, observações ou objetivos de longo prazo..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 resize-none"
               />
             </div>
 
@@ -1461,45 +1445,24 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
         </form>
       </Modal>
 
-      {/* Modal: Delete Journey Confirmation */}
-      <Modal
+      <ConfirmDialog
         isOpen={!!deletingJourney}
-        onClose={() => !isDeletingJourney && setDeletingJourney(null)}
+        onClose={() => setDeletingJourney(null)}
+        onConfirm={handleConfirmDeleteJourney}
         title="Excluir Jornada"
         description="Esta ação é irreversível."
-        maxWidth="sm"
-      >
-        {deletingJourney && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-300 leading-relaxed">
+        message={
+          deletingJourney ? (
+            <>
               Tem certeza que deseja excluir a jornada{' '}
-              <strong className="text-white">{deletingJourney.name}</strong>? Todos os marcos do
-              histórico de progresso e builds vinculados a ela também serão removidos.
-            </p>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isDeletingJourney}
-                onClick={() => setDeletingJourney(null)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                isLoading={isDeletingJourney}
-                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
-                onClick={handleConfirmDeleteJourney}
-              >
-                Confirmar Exclusão
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+              <strong className="text-white">{deletingJourney.name}</strong>? Todos os marcos e
+              builds vinculados a ela também serão removidos.
+            </>
+          ) : null
+        }
+        confirmLabel="Confirmar Exclusão"
+        isLoading={isDeletingJourney}
+      />
 
       {/* Modal: Create / Edit Progress Log */}
       <Modal
@@ -1511,92 +1474,75 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
       >
         <form onSubmit={handleSaveProgress} className="space-y-4">
           {pError && (
-            <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div
+              role="alert"
+              className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
               <span>{pError}</span>
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Região / Área</label>
-              <input
-                type="text"
-                maxLength={150}
-                value={pArea}
-                onChange={(e) => setPArea(e.target.value)}
-                placeholder="Opcional (ex: Castelo Tempesvéu)"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Região / Capítulo"
+              maxLength={150}
+              value={pArea}
+              onChange={(e) => setPArea(e.target.value)}
+              placeholder="Opcional"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Missão / Chefe / Checkpoint
-              </label>
-              <input
-                type="text"
-                maxLength={150}
-                value={pQuest}
-                onChange={(e) => setPQuest(e.target.value)}
-                placeholder="Opcional (ex: Derrotei Godrick)"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Missão / Chefe / Checkpoint"
+              maxLength={150}
+              value={pQuest}
+              onChange={(e) => setPQuest(e.target.value)}
+              placeholder="Opcional"
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Conclusão (%) — Opcional
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={pPercent}
-                onChange={(e) => setPPercent(e.target.value)}
-                placeholder="Deixe vazio se não aplicável"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 tabular-nums"
-              />
-            </div>
+            <Input
+              label="Conclusão (%) — Opcional"
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={pPercent}
+              onChange={(e) => setPPercent(e.target.value)}
+              placeholder="Vazio se não aplicável"
+              className="tabular-nums"
+            />
 
             <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Nível</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={pLevel}
-                  onChange={(e) => setPLevel(e.target.value)}
-                  placeholder="Opcional"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Horas</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={pHours}
-                  onChange={(e) => setPHours(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500 tabular-nums"
-                />
-              </div>
+              <Input
+                label="Nível"
+                type="number"
+                min={0}
+                value={pLevel}
+                onChange={(e) => setPLevel(e.target.value)}
+                placeholder="Opcional"
+                className="tabular-nums"
+              />
+              <Input
+                label="Horas"
+                type="number"
+                min={0}
+                step={0.5}
+                value={pHours}
+                onChange={(e) => setPHours(e.target.value)}
+                className="tabular-nums"
+              />
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Descrição do Progresso *
-              </label>
-              <textarea
+              <Textarea
+                label="Descrição do Progresso"
                 rows={4}
                 required
                 maxLength={2000}
+                showCount
                 value={pDescription}
                 onChange={(e) => setPDescription(e.target.value)}
-                placeholder="Descreva o que foi conquistado, descoberto ou decisões tomadas neste ponto da jornada..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 resize-none"
+                placeholder="Descreva o que foi conquistado, descoberto ou decisões tomadas neste ponto..."
               />
             </div>
           </div>
@@ -1618,108 +1564,78 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
         </form>
       </Modal>
 
-      {/* Modal: Delete Progress Confirmation */}
-      <Modal
+      <ConfirmDialog
         isOpen={!!deletingProgress}
-        onClose={() => !isDeletingProgress && setDeletingProgress(null)}
-        title="Excluir Registro de Progresso"
-        maxWidth="sm"
-      >
-        {deletingProgress && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-300 leading-relaxed">
-              Remover este marco da linha do tempo?
-            </p>
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 line-clamp-3">
-              {deletingProgress.description}
+        onClose={() => setDeletingProgress(null)}
+        onConfirm={handleConfirmDeleteProgress}
+        title="Excluir Marco de Progresso"
+        message={
+          deletingProgress ? (
+            <div className="space-y-2">
+              <p>Remover este marco da linha do tempo?</p>
+              <div className="p-3 rounded-xl bg-[var(--bg-inset)] border border-slate-800 text-xs text-slate-400 line-clamp-3">
+                {deletingProgress.description}
+              </div>
             </div>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isDeletingProgress}
-                onClick={() => setDeletingProgress(null)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                isLoading={isDeletingProgress}
-                onClick={handleConfirmDeleteProgress}
-              >
-                Excluir
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+          ) : null
+        }
+        confirmLabel="Excluir"
+        isLoading={isDeletingProgress}
+      />
 
       {/* Modal: Create / Edit Build */}
       <Modal
         isOpen={isBuildModalOpen}
         onClose={() => !isSavingBuild && setIsBuildModalOpen(false)}
-        title={editingBuild ? 'Editar Build' : 'Criar Build do Personagem'}
+        title={editingBuild ? 'Editar Build' : 'Criar Build'}
         description={selectedJourney?.name}
         maxWidth="lg"
       >
         <form onSubmit={handleSaveBuild} className="space-y-4">
           {bError && (
-            <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div
+              role="alert"
+              className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
               <span>{bError}</span>
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Nome da Build *
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={120}
-                value={bName}
-                onChange={(e) => setBName(e.target.value)}
-                placeholder="Ex: Mago Lunar, Netrunner Furtivo"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Nome da Build"
+              required
+              maxLength={120}
+              value={bName}
+              onChange={(e) => setBName(e.target.value)}
+              placeholder="Ex: Loadout Tático, Deck Controle, Arqueiro..."
+            />
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Estilo de Jogo</label>
-              <input
-                type="text"
-                maxLength={100}
-                value={bPlaystyle}
-                onChange={(e) => setBPlaystyle(e.target.value)}
-                placeholder="Ex: Dano à distância / Bleed"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
-              />
-            </div>
+            <Input
+              label="Estilo de Jogo"
+              maxLength={100}
+              value={bPlaystyle}
+              onChange={(e) => setBPlaystyle(e.target.value)}
+              placeholder="Ex: Furtivo, Suporte, Agressivo"
+            />
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">Descrição</label>
-              <input
-                type="text"
+              <Input
+                label="Descrição"
                 maxLength={2000}
                 value={bDescription}
                 onChange={(e) => setBDescription(e.target.value)}
                 placeholder="Resumo da sinergia principal da build..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
               />
             </div>
           </div>
 
-          {/* Toggle Visual Key-Value vs Advanced JSON */}
           <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-            <span className="text-xs font-semibold text-slate-300">
+            <span className="text-xs font-semibold text-slate-200">
               Atributos e Equipamentos (Estrutura Flexível)
             </span>
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-1 bg-[var(--bg-inset)] p-1 rounded-xl border border-slate-800">
               <button
                 type="button"
                 onClick={() => bJsonMode && toggleBuildJsonMode(false)}
@@ -1727,7 +1643,7 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                   !bJsonMode ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <ListChecks className="w-3.5 h-3.5" /> Visual
+                <ListChecks className="w-3.5 h-3.5" aria-hidden="true" /> Visual
               </button>
               <button
                 type="button"
@@ -1736,21 +1652,20 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                   bJsonMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Code2 className="w-3.5 h-3.5" /> JSON
+                <Code2 className="w-3.5 h-3.5" aria-hidden="true" /> JSON
               </button>
             </div>
           </div>
 
           {!bJsonMode ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Attributes Key-Value Builder */}
-              <div className="space-y-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+              <div className="space-y-2 p-3 rounded-xl bg-[var(--bg-inset)] border border-slate-800">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-violet-300">Atributos / Stats</span>
                   <button
                     type="button"
                     onClick={() => setBAttrRows((r) => [...r, { key: '', value: '' }])}
-                    className="text-[11px] text-violet-400 hover:text-violet-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] text-violet-300 hover:text-white font-semibold flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" /> Adicionar
                   </button>
@@ -1760,25 +1675,27 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                     <div key={i} className="flex items-center gap-1.5">
                       <input
                         type="text"
+                        aria-label={`Atributo ${i + 1}`}
                         value={row.key}
                         onChange={(e) =>
                           setBAttrRows((prev) =>
                             prev.map((item, idx) => (idx === i ? { ...item, key: e.target.value } : item))
                           )
                         }
-                        placeholder="Chave (ex: Vigor)"
-                        className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
+                        placeholder="Chave"
+                        className="w-1/2 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
                       />
                       <input
                         type="text"
+                        aria-label={`Valor do atributo ${i + 1}`}
                         value={row.value}
                         onChange={(e) =>
                           setBAttrRows((prev) =>
                             prev.map((item, idx) => (idx === i ? { ...item, value: e.target.value } : item))
                           )
                         }
-                        placeholder="Valor (ex: 40)"
-                        className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500"
+                        placeholder="Valor"
+                        className="w-1/2 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
                       />
                       <button
                         type="button"
@@ -1787,8 +1704,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                             prev.length > 1 ? prev.filter((_, idx) => idx !== i) : [{ key: '', value: '' }]
                           )
                         }
-                        className="p-1 text-slate-500 hover:text-rose-400 shrink-0"
-                        title="Remover linha"
+                        className="p-1 text-slate-400 hover:text-rose-300 shrink-0 cursor-pointer"
+                        aria-label={`Remover atributo ${i + 1}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1797,14 +1714,13 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                 </div>
               </div>
 
-              {/* Equipment Key-Value Builder */}
-              <div className="space-y-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+              <div className="space-y-2 p-3 rounded-xl bg-[var(--bg-inset)] border border-slate-800">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-blue-300">Equipamentos / Perks</span>
                   <button
                     type="button"
                     onClick={() => setBEquipRows((r) => [...r, { key: '', value: '' }])}
-                    className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] text-blue-300 hover:text-white font-semibold flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" /> Adicionar
                   </button>
@@ -1814,25 +1730,27 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                     <div key={i} className="flex items-center gap-1.5">
                       <input
                         type="text"
+                        aria-label={`Slot ${i + 1}`}
                         value={row.key}
                         onChange={(e) =>
                           setBEquipRows((prev) =>
                             prev.map((item, idx) => (idx === i ? { ...item, key: e.target.value } : item))
                           )
                         }
-                        placeholder="Slot (ex: Arma)"
-                        className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                        placeholder="Slot"
+                        className="w-1/2 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-400"
                       />
                       <input
                         type="text"
+                        aria-label={`Item ${i + 1}`}
                         value={row.value}
                         onChange={(e) =>
                           setBEquipRows((prev) =>
                             prev.map((item, idx) => (idx === i ? { ...item, value: e.target.value } : item))
                           )
                         }
-                        placeholder="Item (ex: Véu da Lua)"
-                        className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                        placeholder="Item"
+                        className="w-1/2 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-400"
                       />
                       <button
                         type="button"
@@ -1841,8 +1759,8 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
                             prev.length > 1 ? prev.filter((_, idx) => idx !== i) : [{ key: '', value: '' }]
                           )
                         }
-                        className="p-1 text-slate-500 hover:text-rose-400 shrink-0"
-                        title="Remover linha"
+                        className="p-1 text-slate-400 hover:text-rose-300 shrink-0 cursor-pointer"
+                        aria-label={`Remover equipamento ${i + 1}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1853,44 +1771,32 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-violet-300 mb-1">
-                  attributes (JSON)
-                </label>
-                <textarea
-                  rows={5}
-                  value={bAttrJson}
-                  onChange={(e) => setBAttrJson(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-violet-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-blue-300 mb-1">
-                  equipment (JSON)
-                </label>
-                <textarea
-                  rows={5}
-                  value={bEquipJson}
-                  onChange={(e) => setBEquipJson(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+              <Textarea
+                label="Atributos (JSON)"
+                rows={5}
+                value={bAttrJson}
+                onChange={(e) => setBAttrJson(e.target.value)}
+                className="font-mono text-xs"
+              />
+              <Textarea
+                label="Equipamentos (JSON)"
+                rows={5}
+                value={bEquipJson}
+                onChange={(e) => setBEquipJson(e.target.value)}
+                className="font-mono text-xs"
+              />
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Observações / Estratégia
-            </label>
-            <textarea
-              rows={2}
-              maxLength={2000}
-              value={bNotes}
-              onChange={(e) => setBNotes(e.target.value)}
-              placeholder="Rotação de habilidades, fraquezas cobertas ou dicas de uso..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500 resize-none"
-            />
-          </div>
+          <Textarea
+            label="Observações / Estratégia"
+            rows={2}
+            maxLength={2000}
+            showCount
+            value={bNotes}
+            onChange={(e) => setBNotes(e.target.value)}
+            placeholder="Sinergias, pontos fortes ou dicas de uso..."
+          />
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
             <Button
@@ -1909,42 +1815,22 @@ export function JourneysView({ selectedEntry, onSelectEntry, onNavigate }: Journ
         </form>
       </Modal>
 
-      {/* Modal: Delete Build Confirmation */}
-      <Modal
+      <ConfirmDialog
         isOpen={!!deletingBuild}
-        onClose={() => !isDeletingBuild && setDeletingBuild(null)}
+        onClose={() => setDeletingBuild(null)}
+        onConfirm={handleConfirmDeleteBuild}
         title="Excluir Build"
-        maxWidth="sm"
-      >
-        {deletingBuild && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-300 leading-relaxed">
+        message={
+          deletingBuild ? (
+            <>
               Tem certeza que deseja excluir a build{' '}
               <strong className="text-white">{deletingBuild.name}</strong>?
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isDeletingBuild}
-                onClick={() => setDeletingBuild(null)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                isLoading={isDeletingBuild}
-                onClick={handleConfirmDeleteBuild}
-              >
-                Excluir Build
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+            </>
+          ) : null
+        }
+        confirmLabel="Excluir Build"
+        isLoading={isDeletingBuild}
+      />
     </div>
   );
 }

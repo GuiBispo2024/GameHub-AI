@@ -349,14 +349,21 @@ export class GameAgent {
         err?.message || 'Não foi possível executar a ferramenta solicitada.';
       const durationMs = Date.now() - started;
 
-      logger.warn('[GameAgent Tool Error]', {
+      const statusCode = typeof err?.statusCode === 'number' ? err.statusCode : 500;
+      const logPayload = {
         userId: toolCtx.userId,
         sessionId: toolCtx.sessionId,
         tool: call.name,
         accessType: tool.accessType,
         errorCode,
         durationMs,
-      });
+      };
+
+      if (statusCode >= 400 && statusCode < 500) {
+        logger.info('[GameAgent Tool Validation/Business Rejection]', logPayload);
+      } else {
+        logger.warn('[GameAgent Tool Error]', logPayload);
+      }
 
       return {
         response: {
